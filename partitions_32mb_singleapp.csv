@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# 32MB flash baseline for the Waveshare ESP32-P4 monitor terminal.
+# Keep a single large factory slot for BSP, LVGL, hosted Wi-Fi, and embedded UI assets.
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        12M,

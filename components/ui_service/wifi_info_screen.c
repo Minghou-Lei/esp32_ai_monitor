@@ -24,12 +24,17 @@
 static const char *TAG = "wifi_info_screen";
 static const uint32_t WIFI_INFO_SCREEN_DRAW_BUFFER_LINES = 20;
 static const uint32_t WIFI_INFO_SCREEN_FIRST_REFRESH_MS = 200;
+static const int32_t WIFI_INFO_SCREEN_FONT_SIZE = 24;
 
 static lv_obj_t *s_details_label;
 static bool s_screen_started;
 static bool s_first_refresh_completed;
+static lv_font_t *s_runtime_font;
 static network_service_snapshot_t s_snapshot_cache;
 static char s_text_buffer[1536];
+
+extern const uint8_t jnr_sb_font_ttf_start[] asm("_binary_jnr_sb_font_ttf_start");
+extern const uint8_t jnr_sb_font_ttf_end[] asm("_binary_jnr_sb_font_ttf_end");
 
 static lv_display_t *wifi_info_screen_start_display(void)
 {
@@ -49,6 +54,38 @@ static lv_display_t *wifi_info_screen_start_display(void)
      * 这里把 LVGL 的绘图缓冲也切到 PSRAM，并收小为 20 行，避免继续挤占片上 SRAM。
      */
     return bsp_display_start_with_config(&display_cfg);
+}
+
+/**
+ * @brief 在 BSP 完成 LVGL 启动后，从嵌入式 TTF 资产构建运行时字体。
+ *
+ * TinyTTF 的缓存分配走 LVGL 堆；因此必须等 `bsp_display_start_with_config()`
+ * 成功后再创建字体对象，否则字体缓存会绑定到未初始化的 LVGL 运行时。
+ */
+static void wifi_info_screen_prepare_font(void)
+{
+    if (s_runtime_font != NULL) {
+        return;
+    }
+
+    size_t font_data_size = (size_t)(jnr_sb_font_ttf_end - jnr_sb_font_ttf_start);
+    if (font_data_size == 0U) {
+        ESP_LOGW(TAG, "Embedded font asset is empty");
+        return;
+    }
+
+    s_runtime_font = lv_tiny_ttf_create_data(jnr_sb_font_ttf_start,
+                                             font_data_size,
+                                             WIFI_INFO_SCREEN_FONT_SIZE);
+    if (s_runtime_font == NULL) {
+        ESP_LOGW(TAG, "Failed to create TinyTTF font from embedded asset");
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "Loaded TinyTTF font asset (%u bytes, %ld px)",
+             (unsigned int)font_data_size,
+             (long)WIFI_INFO_SCREEN_FONT_SIZE);
 }
 
 /**
@@ -141,6 +178,8 @@ static void wifi_info_screen_refresh(lv_timer_t *timer)
  */
 static void wifi_info_screen_create_layout(void)
 {
+    wifi_info_screen_prepare_font();
+
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0xF3F5F7), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
@@ -148,11 +187,17 @@ static void wifi_info_screen_create_layout(void)
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "Wi-Fi Details");
     lv_obj_set_style_text_color(title, lv_color_hex(0x0F172A), 0);
+    if (s_runtime_font != NULL) {
+        lv_obj_set_style_text_font(title, s_runtime_font, 0);
+    }
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 28, 20);
 
     lv_obj_t *subtitle = lv_label_create(screen);
     lv_label_set_text(subtitle, "ESP32-P4 monitor terminal");
     lv_obj_set_style_text_color(subtitle, lv_color_hex(0x475569), 0);
+    if (s_runtime_font != NULL) {
+        lv_obj_set_style_text_font(subtitle, s_runtime_font, 0);
+    }
     lv_obj_align_to(subtitle, title, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 6);
 
     lv_obj_t *panel = lv_obj_create(screen);
@@ -170,6 +215,9 @@ static void wifi_info_screen_create_layout(void)
     lv_obj_set_width(s_details_label, 620);
     lv_label_set_long_mode(s_details_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(s_details_label, lv_color_hex(0x111827), 0);
+    if (s_runtime_font != NULL) {
+        lv_obj_set_style_text_font(s_details_label, s_runtime_font, 0);
+    }
     lv_label_set_text(s_details_label, "Wi-Fi details loading...");
 
     lv_timer_create(wifi_info_screen_refresh, WIFI_INFO_SCREEN_FIRST_REFRESH_MS, NULL);

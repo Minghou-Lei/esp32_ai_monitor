@@ -23,8 +23,8 @@
 
 ### 软件资料
 
-- Espressif Component Registry 中的 `waveshare/esp32_p4_wifi6_touch_lcd_4b`
-- Waveshare `Waveshare-ESP32-components` 仓库
+- Espressif Component Registry 的 `waveshare` 命名空间搜索页：<https://components.espressif.com/components?q=namespace:waveshare>
+- 本项目后续凡涉及微雪官方 `ESP32-P4-WIFI6-Touch-LCD-4B` 依赖确认，只认上面的搜索页，不再把 GitHub 仓库或单个组件详情页当成新的来源基准
 
 ## 硬件结论
 
@@ -77,6 +77,7 @@
 优先使用官方 `BSP`：
 
 - `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+- 该依赖的来源固定为 `namespace:waveshare` 搜索页，不再单独维护第二套来源口径
 
 官方组件资料显示，这个 `BSP` 已封装：
 
@@ -171,8 +172,8 @@
 
 ### 工程侧
 
-- 增加 `idf_component.yml`
-- 接入 `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+- 保持 `main/idf_component.yml` 与 `dependencies.lock` 受控
+- 后续如需升级或新增微雪官方组件，只能先从 `namespace:waveshare` 搜索页确认
 - 建立 `components/` 级模块骨架
 
 ### 验证侧

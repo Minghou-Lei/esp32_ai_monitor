@@ -28,6 +28,8 @@
 - 优先复用官方 `BSP`
 - 优先使用 `ESP-IDF` 组件管理器
 - 新增三方依赖时，优先写入 `idf_component.yml`
+- 微雪官方 `ESP32-P4-WIFI6-Touch-LCD-4B` 依赖的来源只认 <https://components.espressif.com/components?q=namespace:waveshare>
+- 如需升级或新增 `waveshare` 命名空间组件，先查上述搜索页，再更新 `idf_component.yml` 与 `dependencies.lock`
 
 ### UI 约定
 

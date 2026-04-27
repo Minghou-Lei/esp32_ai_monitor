@@ -26,16 +26,17 @@
 
 - 后续引入 `LVGL`、图像资源、`OTA`、日志缓冲时，很容易先卡在分区与容量上
 
-### 3. 板级依赖尚未接入
+### 3. 板级依赖已接入，但还没有形成上板验证闭环
 
 证据：
 
-- 当前仓库没有 `idf_component.yml`
-- 当前仓库没有接入 `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+- 当前仓库已经存在 `main/idf_component.yml`
+- 当前仓库已经接入 `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+- `main/main.c` 仍只有空的 `app_main()`
 
 影响：
 
-- 如果直接开发屏幕或触摸，容易重复造轮子或走错初始化路径
+- 仅有依赖清单与锁文件，不代表屏幕、触摸和 `LVGL` 已完成真实 bring-up
 
 ### 4. 没有明确区分“现状”与“建议”
 

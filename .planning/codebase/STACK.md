@@ -4,7 +4,7 @@
 
 ## 概览
 
-当前仓库是一个最小化的 `ESP-IDF` C 工程，目标芯片为 `esp32p4`，尚未引入 Waveshare 官方板级 `BSP`，也尚未进入功能开发阶段。
+当前仓库是一个仍处于早期阶段的 `ESP-IDF` C 工程，目标芯片为 `esp32p4`；Waveshare 官方板级 `BSP` 已经接入，但业务代码和上板 bring-up 仍未真正展开。
 
 ## 当前技术栈
 
@@ -27,7 +27,8 @@
 ### 工程配置现状
 
 - 当前 `main/main.c` 仅包含空的 `app_main()`。
-- 当前仓库没有 `idf_component.yml`。
+- 当前仓库已经存在 `main/idf_component.yml`。
+- 当前仓库已经存在 `dependencies.lock` 与 `managed_components/`，说明 `waveshare/esp32_p4_wifi6_touch_lcd_4b` 已被解析到本地。
 - 当前仓库没有 `components/` 业务模块目录。
 - 当前仓库没有自定义 `partitions.csv`。
 - 当前仓库没有测试目录，也没有测试框架接入。
@@ -46,9 +47,9 @@
 - `FreeRTOS`（由 `ESP-IDF` 提供）
 - `esp32p4` 目标平台工具链
 
-### 尚未接入但强烈建议后续接入的板级依赖
+### 已确认的板级依赖与来源约束
 
-以下依赖来自官方 `BSP`，属于推荐后续接入方向，不代表当前仓库已使用：
+以下依赖已由 `main/idf_component.yml` 和 `dependencies.lock` 体现；其中微雪官方依赖的来源只认 <https://components.espressif.com/components?q=namespace:waveshare>：
 
 - `waveshare/esp32_p4_wifi6_touch_lcd_4b`
 - `waveshare/esp_lcd_st7703`
@@ -71,7 +72,7 @@
 
 ## 建议的下一个栈演进点
 
-1. 增加 `idf_component.yml`
-2. 接入 `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+1. 保持 `idf_component.yml`、`dependencies.lock` 与实际依赖状态同步
+2. 后续若升级微雪组件，先按唯一来源规则核对版本与包名
 3. 补齐显示、触摸、`LVGL` 的板级 bring-up
 4. 再进入网络监控协议和 UI 业务开发

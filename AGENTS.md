@@ -22,7 +22,8 @@
 - 组件注册文件是 [main/CMakeLists.txt](E:/esp32_ai_monitor/main/CMakeLists.txt)。
 - 当前 `app_main()` 为空，业务代码还未开始。
 - 当前 `sdkconfig` 目标芯片是 `esp32p4`。
-- 当前仓库还没有 `idf_component.yml`，也没有接入板级 `BSP` 依赖。
+- 当前仓库已经存在依赖清单文件 [main/idf_component.yml](E:/esp32_ai_monitor/main/idf_component.yml)，并声明了 `waveshare/esp32_p4_wifi6_touch_lcd_4b`。
+- 当前仓库已经生成 `dependencies.lock`，且本地存在 `managed_components/`，说明板级 `BSP` 依赖已通过 `ESP-IDF` 组件管理器解析到工程内。
 - 当前仓库已有一份方向性方案文档：[docs/ai-agent-monitor-proposal.md](E:/esp32_ai_monitor/docs/ai-agent-monitor-proposal.md)。
 
 注意：
@@ -54,6 +55,11 @@
 推荐依赖：
 
 - `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+
+依赖来源约束：
+
+- 在本仓库里，微雪官方 `ESP32-P4-WIFI6-Touch-LCD-4B` 相关依赖的唯一来源是 <https://components.espressif.com/components?q=namespace:waveshare>。
+- 不要把 GitHub 仓库、第三方教程、博客摘录或单个组件详情页当成新的依赖来源基准。
 
 官方组件公开信息表明，这个 `BSP` 已经封装了以下能力：
 
@@ -311,7 +317,7 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
-如果引入了板级组件依赖，优先使用：
+如果需要重新声明、升级或核对板级组件依赖，先以唯一依赖来源确认包名与版本，再使用：
 
 ```bash
 idf.py add-dependency "waveshare/esp32_p4_wifi6_touch_lcd_4b^1.0.1"
@@ -350,9 +356,9 @@ idf.py add-dependency "waveshare/esp32_p4_wifi6_touch_lcd_4b^1.0.1"
   - <https://documentation.espressif.com/esp32-p4_datasheet_cn.pdf>
 - `ESP32-P4` 技术参考手册（中文）：
   - <https://documentation.espressif.com/esp32-p4_technical_reference_manual_cn.pdf>
-- Espressif 组件注册表中的板级 `BSP`：
-  - <https://components.espressif.com/components/waveshare/esp32_p4_wifi6_touch_lcd_4b>
+- Espressif 组件注册表的 `waveshare` 命名空间搜索页（本仓库唯一依赖来源）：
+  - <https://components.espressif.com/components?q=namespace:waveshare>
 
 ## 10. 对未来 agent 的一句话要求
 
-在这个仓库里，先把 `ESP32-P4-WIFI6-Touch-LCD-4B` 当成“带触摸屏的网络监控终端”来开发；先吃透官方 `BSP` 和示例，再做自己的架构，不要一上来就从底层裸写整板驱动。
+在这个仓库里，先把 `ESP32-P4-WIFI6-Touch-LCD-4B` 当成“带触摸屏的网络监控终端”来开发；先从唯一依赖来源确认 `waveshare` 组件，再吃透官方 `BSP` 和示例，最后做自己的架构，不要一上来就从底层裸写整板驱动。

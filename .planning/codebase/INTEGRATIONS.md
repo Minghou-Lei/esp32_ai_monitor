@@ -30,8 +30,9 @@
 ### 板级软件资源
 
 - Waveshare 官方板级 `BSP`：`waveshare/esp32_p4_wifi6_touch_lcd_4b`
-- Espressif 组件注册表
-- Waveshare `Waveshare-ESP32-components` 仓库
+- 唯一依赖来源：Espressif Components `waveshare` 命名空间搜索页
+- 地址：<https://components.espressif.com/components?q=namespace:waveshare>
+- 不再把 GitHub 仓库或单个组件详情页作为本仓库的依赖来源基准
 
 ### 官方文档与硬件资料
 

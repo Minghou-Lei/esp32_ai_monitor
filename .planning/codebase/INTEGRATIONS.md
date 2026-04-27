@@ -26,6 +26,10 @@
 - `idf.py`
 - `CMake`
 - `esp32p4` 交叉编译工具链
+- `VSCode` 的 `ESP-IDF` 插件与 `SDK Configuration Editor`
+- 当前工作区的 `.vscode/settings.json` 已记录 `idf.currentSetup = C:\esp\v5.5.4\esp-idf`
+- 在 Windows 终端中，若 `idf.py` 不在当前会话的 `PATH`，应先执行上述 `ESP-IDF` 根目录下的 `export.ps1`
+- `SDK Configuration Editor` 修改的是当前 `sdkconfig`，需要结合仓库根 `sdkconfig.defaults` 和 `idf.py reconfigure` 才能形成可提交、可复现的配置基线
 
 ### 板级软件资源
 

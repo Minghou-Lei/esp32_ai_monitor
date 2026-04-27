@@ -25,6 +25,9 @@
 - 当前仓库已经存在依赖清单文件 [main/idf_component.yml](E:/esp32_ai_monitor/main/idf_component.yml)，并声明了 `waveshare/esp32_p4_wifi6_touch_lcd_4b`。
 - 当前仓库已经生成 `dependencies.lock`，且本地存在 `managed_components/`，说明板级 `BSP` 依赖已通过 `ESP-IDF` 组件管理器解析到工程内。
 - 当前仓库已有一份方向性方案文档：[docs/ai-agent-monitor-proposal.md](E:/esp32_ai_monitor/docs/ai-agent-monitor-proposal.md)。
+- 当前仓库根目录已有 [sdkconfig.defaults](E:/esp32_ai_monitor/sdkconfig.defaults)，它应被视为可提交的 `ESP-IDF` 持久配置基线。
+- 当前仓库根目录的 [sdkconfig](E:/esp32_ai_monitor/sdkconfig) 是当前生效态，不应被当成唯一持久来源；它可以被 `idf.py reconfigure` 或 `menuconfig` 重写。
+- 当前工作区的 [settings.json](E:/esp32_ai_monitor/.vscode/settings.json) 已记录 `ESP-IDF` 安装根：`idf.currentSetup = C:\esp\v5.5.4\esp-idf`。
 
 注意：
 
@@ -158,6 +161,7 @@
 
 - `AGENTS.md`
 - `.planning/research/2026-04-27-waveshare-esp32-p4-wifi6-touch-lcd-4b.md`
+- `.planning/research/2026-04-27-esp32-p4-wifi-bringup-pitfalls.md`
 - `.planning/codebase/*.md`
 
 ### 3.6 官方示例的使用顺序
@@ -328,6 +332,43 @@ idf.py add-dependency "waveshare/esp32_p4_wifi6_touch_lcd_4b^1.0.1"
 - 改了组件依赖、分区、`sdkconfig` 或 `menuconfig` 后，优先 `reconfigure` 再 `build`。
 - 改了显示链路后，必须上板验证，不接受只看编译结果。
 
+### 7.1 Windows 下获取 `idf.py` 环境
+
+- 不要默认当前 `PowerShell` 已经能直接识别 `idf.py`。
+- 在本仓库对应的当前工作区里，优先从 [settings.json](E:/esp32_ai_monitor/.vscode/settings.json) 的 `idf.currentSetup` 读取 `ESP-IDF` 根路径。
+- 当前机器上的已知路径是 `C:\esp\v5.5.4\esp-idf`，后续如路径变化，以 `.vscode/settings.json` 的值为准。
+- 如果终端里 `idf.py` 不可用，先执行该路径下的 `export.ps1`，再运行 `idf.py`。
+
+```powershell
+& 'C:\esp\v5.5.4\esp-idf\export.ps1' *> $null
+idf.py reconfigure
+```
+
+- 也可以串成单行：
+
+```powershell
+& 'C:\esp\v5.5.4\esp-idf\export.ps1' *> $null; idf.py build
+```
+
+### 7.2 `SDK Configuration Editor` 的正确持久化流程
+
+- `VSCode` 的 `SDK Configuration Editor` 或 `menuconfig` 主要修改的是当前生效态 [sdkconfig](E:/esp32_ai_monitor/sdkconfig)。
+- 如果希望配置对仓库长期生效，必须把应提交的基线同步回 [sdkconfig.defaults](E:/esp32_ai_monitor/sdkconfig.defaults)，不能只停留在 `sdkconfig`。
+- 正确顺序是：先在 `SDK Configuration Editor` 中验证配置组合，再把需要持久化的选项整理到 `sdkconfig.defaults`，最后运行 `idf.py reconfigure` 让生成态重新吃一遍默认值。
+- 只要改动涉及 `ESP-Hosted`、`Wi-Fi Remote`、分区、`flash size`、`PSRAM`、显示参数或 `LWIP` 缓冲区，都按上述流程处理。
+- `idf.py save-defconfig` 可以把当前 `sdkconfig` 回写为默认配置，但必须先审查结果；它可能把本地 `SSID`、密码或其他只适合本机的选项一并写入基线。
+- 如无明确理由，不要把本机私有凭据提交进 `sdkconfig.defaults`。
+
+### 7.3 已踩过的 `Wi-Fi bring-up` 坑
+
+- 对这块板，`Wi-Fi` 不是 `ESP32-P4` 本地 `esp_wifi`，而是 `ESP32-P4 host + ESP32-C6 slave` 的 `ESP-Hosted + esp_wifi_remote` 路线。
+- 不要打开 `CONFIG_ESP_HOST_WIFI_ENABLED=y`。本地 `esp_wifi_remote` 组件把它和 `Wi-Fi Remote` 视为互斥；一旦打开，就可能重新掉回本地 `net80211` 路线。
+- `ESP-Hosted` 的板级配置要优先选 `P4 Function EV Board + SDIO`，不要误配成 `No development board + SPI`。
+- 如果运行日志出现 `OS adapter function version error`、`Failed to unregister Rx callbacks`、`esp_wifi_init failed`，优先怀疑走偏到本地 Wi-Fi 路线，而不是先改业务代码。
+- 如果日志卡在 `HS_MP: mempool create failed: no mem` 或 `sdio_mempool_create` 断言，优先怀疑内部 DMA 内存不足；当前项目的已知解法是关闭 `ESP_HOSTED_USE_MEMPOOL`，并把 Hosted 默认任务栈迁到 `SPIRAM`。
+- 如果 UI 首帧阶段出现 `_svfprintf_r` / `snprintf` 的 `Stack protection fault`，优先减少首帧格式化压力，不要在启动阶段做巨型单次字符串拼接。
+- 完整复盘见 [2026-04-27-esp32-p4-wifi-bringup-pitfalls.md](E:/esp32_ai_monitor/.planning/research/2026-04-27-esp32-p4-wifi-bringup-pitfalls.md)。
+
 ## 8. 修改前检查清单
 
 开始写代码前，先回答下面几个问题：
@@ -337,8 +378,9 @@ idf.py add-dependency "waveshare/esp32_p4_wifi6_touch_lcd_4b^1.0.1"
 3. 当前 `sdkconfig`、分区表、`flash` 配置是否足够？
 4. 这次改动能否拆成独立组件，而不是继续堆进 `main.c`？
 5. 这次改动的“上板验收动作”是什么？
+6. 如果这次改动涉及 `SDK Configuration Editor` 或 `menuconfig`，哪些项只在 `sdkconfig` 生效，哪些项必须回写到 `sdkconfig.defaults`？
 
-如果这五个问题答不清，不要急着写实现。
+如果这些问题答不清，不要急着写实现。
 
 ## 9. 参考资料
 

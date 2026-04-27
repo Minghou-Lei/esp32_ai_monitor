@@ -1,0 +1,28 @@
+menu "AI Monitor Configuration"
+
+    config AI_MONITOR_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Wi-Fi SSID used by the monitor terminal in station mode.
+
+    config AI_MONITOR_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Wi-Fi password used by the monitor terminal in station mode.
+
+    config AI_MONITOR_WIFI_HOSTNAME
+        string "Wi-Fi hostname"
+        default "esp32-ai-monitor"
+        help
+            Hostname registered on the connected network interface.
+
+    config AI_MONITOR_UI_REFRESH_MS
+        int "Wi-Fi detail refresh interval (ms)"
+        range 250 5000
+        default 1000
+        help
+            LVGL refresh interval for the on-screen Wi-Fi detail page.
+
+endmenu

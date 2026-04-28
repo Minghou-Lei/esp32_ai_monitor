@@ -25,6 +25,11 @@ static const char *TAG = "wifi_info_screen";
 static const uint32_t WIFI_INFO_SCREEN_DRAW_BUFFER_LINES = 20;
 static const uint32_t WIFI_INFO_SCREEN_FIRST_REFRESH_MS = 200;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE = 24;
+static const uint32_t WIFI_INFO_SCREEN_COLOR_SCREEN_BG = 0x000000;
+static const uint32_t WIFI_INFO_SCREEN_COLOR_PANEL_BG = 0x000000;
+static const uint32_t WIFI_INFO_SCREEN_COLOR_PANEL_BORDER = 0x4B5563;
+static const uint32_t WIFI_INFO_SCREEN_COLOR_PRIMARY_TEXT = 0xFFFFFF;
+static const uint32_t WIFI_INFO_SCREEN_COLOR_SECONDARY_TEXT = 0xD1D5DB;
 
 static lv_obj_t *s_details_label;
 static bool s_screen_started;
@@ -181,12 +186,12 @@ static void wifi_info_screen_create_layout(void)
     wifi_info_screen_prepare_font();
 
     lv_obj_t *screen = lv_screen_active();
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0xF3F5F7), 0);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(WIFI_INFO_SCREEN_COLOR_SCREEN_BG), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "Wi-Fi Details");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x0F172A), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(WIFI_INFO_SCREEN_COLOR_PRIMARY_TEXT), 0);
     if (s_runtime_font != NULL) {
         lv_obj_set_style_text_font(title, s_runtime_font, 0);
     }
@@ -194,7 +199,7 @@ static void wifi_info_screen_create_layout(void)
 
     lv_obj_t *subtitle = lv_label_create(screen);
     lv_label_set_text(subtitle, "ESP32-P4 monitor terminal");
-    lv_obj_set_style_text_color(subtitle, lv_color_hex(0x475569), 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(WIFI_INFO_SCREEN_COLOR_SECONDARY_TEXT), 0);
     if (s_runtime_font != NULL) {
         lv_obj_set_style_text_font(subtitle, s_runtime_font, 0);
     }
@@ -205,8 +210,9 @@ static void wifi_info_screen_create_layout(void)
     lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, -24);
     lv_obj_set_style_radius(panel, 20, 0);
     lv_obj_set_style_pad_all(panel, 18, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0xD7DEE8), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(WIFI_INFO_SCREEN_COLOR_PANEL_BG), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(WIFI_INFO_SCREEN_COLOR_PANEL_BORDER), 0);
     lv_obj_set_style_shadow_width(panel, 12, 0);
     lv_obj_set_style_shadow_opa(panel, LV_OPA_20, 0);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_ACTIVE);
@@ -214,7 +220,7 @@ static void wifi_info_screen_create_layout(void)
     s_details_label = lv_label_create(panel);
     lv_obj_set_width(s_details_label, 620);
     lv_label_set_long_mode(s_details_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(s_details_label, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(s_details_label, lv_color_hex(WIFI_INFO_SCREEN_COLOR_PRIMARY_TEXT), 0);
     if (s_runtime_font != NULL) {
         lv_obj_set_style_text_font(s_details_label, s_runtime_font, 0);
     }

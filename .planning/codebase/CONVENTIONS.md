@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+last_mapped_commit: f4a155a1d23a3aa8ca4e7cb568217b35c1d5a510
 mapped_at: 2026-05-17
 ---
 
@@ -9,163 +9,145 @@ mapped_at: 2026-05-17
 
 ### `app_main()` 保持轻量
 
-当前 `main/main.c` 只做两件事：
+当前 `main/main.c` 只做启动编排，不承载具体业务逻辑。这条约定已经从旧阶段继续保留下来，但启动内容已经扩展为：
 
-- 启动 `wifi_info_screen_start()`
-- 启动 `network_service_start()`
+- `wifi_info_screen_start()`
+- `network_service_start()`
+- `provider_service_start()`
+- `config_web_service_start()`
 
-这条约定已经落地，不应回退成把显示、网络、协议解析再塞回 `main`。
+后续不应把网络、HTTP、provider 或页面细节重新塞回 `main`。
 
 ### 业务能力优先拆进 `components/`
 
-当前正向示例已经存在：
+当前业务能力已经拆成四个清晰组件：
 
-- `components/network_service`
-- `components/ui_service`
+- `app_config_service`
+- `network_service`
+- `provider_service`
+- `config_web_service`
 
-后续如果增加监控协议、状态存储或控制能力，优先继续沿组件边界扩展，而不是把逻辑压回单文件。
+UI 则单独留在 `ui_service`。这条边界应继续保持。
 
 ## 配置管理约定
 
-### `sdkconfig.defaults` 是持久基线
+### 构建期默认值和运行期配置分层
 
-当前仓库已经把设计基线与机器态分开：
+当前项目已经形成稳定分层：
 
 - `sdkconfig.defaults`
-  - 应提交、可复现
+  - 持久配置基线
 - `sdkconfig`
   - 当前机器生效态
+- `NVS`
+  - 运行期覆盖存储
+- `config_web_service`
+  - 运行期人机入口
 
-涉及这些内容时，应优先落到 `sdkconfig.defaults`：
+后续新增可配置项时，应优先接入这条链路，而不是只把字段硬编码进模块内部。
 
-- target
-- flash size
-- 分区表
-- `PSRAM`
-- Hosted / Wi-Fi Remote
-- `LWIP`
-- `LVGL` allocator
-- 显示相关能力开关
+### 不把敏感值沉淀进文档或默认基线
 
-### 不把本机私有项沉淀到默认基线
+当前配置模型已经包含多类敏感字段：
 
-当前 `sdkconfig` 可能带本机 `Wi-Fi` 凭据和主机名，因此应继续坚持：
+- Wi-Fi 密码
+- EAP 用户名 / 密码
+- 门户用户名 / 密码
+- provider token
+- provider 用户头值
 
-- 不把 `SSID` / 密码复制进 `sdkconfig.defaults`
-- 文档不展开本机敏感值
-- 评审 `sdkconfig` 时先检查是否混入私有配置
+因此约定必须明确：
 
-## 依赖来源与 override 约定
+- 文档不展开这些实际值
+- `sdkconfig.defaults` 不写入本机私有配置
+- 评审时要重点看 `sdkconfig` 与文档是否意外泄露配置细节
 
-### 优先官方组件形状
-
-板级依赖的来源基准仍然是 `components.espressif.com` 下的 `waveshare` 命名空间，而不是第三方博客或随手拷贝的仓库。
-
-### 允许最小 override，但不鼓励长期分叉
-
-当前仓库已经存在本地 override 组件，这是当前工作树事实。对应约定应明确为：
-
-- 可以为了 `ESP-IDF v6.0.1` 兼容性做最小 patch
-- patch 目标是“保住官方组件路线”
-- 不要把 override 演变成长期自维护的大 fork
-
-## Wi-Fi 路线约定
-
-当前项目不是“P4 本地直驱无线”的假设，而是：
-
-- `ESP32-P4 host`
-- `ESP32-C6` 无线协处理器
-- `ESP-Hosted + esp_wifi_remote`
-
-因此后续应坚持：
-
-- 不打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
-- 联网异常先检查 Hosted / Remote 配置与依赖组合
-- 看到 `net80211` 风格异常时先怀疑路线跑偏
-
-## UI 与内存约定
+## UI 约定
 
 ### 统一走 `LVGL`
 
-当前 UI 全部基于 `LVGL`，并依赖 `Waveshare BSP`。后续不要再引入第二套本地 UI 体系。
+当前板上主视图完全基于 `LVGL` 与 `BSP`。后续页面继续沿这条路径扩展，不引入第二套 UI 体系。
 
-### `PSRAM + TinyTTF + allocator` 要一起看
+### 优先状态可读性
 
-当前仓库已把：
+当前主视图不是消费级炫技布局，而是围绕：
 
-- `CONFIG_SPIRAM=y`
-- `CONFIG_LV_USE_CLIB_MALLOC=y`
-- `CONFIG_LV_USE_TINY_TTF=y`
+- 网络状态
+- 门户状态
+- provider 状态
+- 额度 / 百分比 / delta
+- 底部详情文本
 
-作为更稳的组合写进默认基线。
+这符合“监控终端”和“bring-up 诊断面板”的定位。
 
-因此约定应明确：
+### 只在文本变化时更新 label
 
-- 不要默认 `LVGL` builtin `64KB` 池足够承载首帧字形缓存
-- 看到首帧 `SW_CPU_RESET` 或 `stb_truetype` 相关断言时，先查字体和堆路径
-- 改字体、改 allocator、改 `PSRAM`、改显示缓冲，都要重新评估这条链路
+当前实现已经显式采用“文本没变就不调用 `lv_label_set_text()`”的策略。这个做法应继续保留，因为页面依赖 `TinyTTF` 和多块大字号文本，盲刷会放大字形缓存与布局成本。
 
-### UI 刷新只更新变化文本
+## 网络约定
 
-当前 `wifi_info_screen.c` 已显式加入“仅在文本变化时才 `lv_label_set_text()`”的做法，这不是偶然优化，而是当前页面的稳定性约定之一。
+### 不把当前工程当成原生 Wi-Fi 板型
 
-原因：
+项目的无线约定仍然是：
 
-- 页面使用多个 `TinyTTF` 大字号对象
-- 无差别反复更新会放大字形缓存与布局开销
-- 可能导致 `taskLVGL` 长时间占用 CPU 并触发 watchdog
+- `ESP32-P4 host`
+- `ESP32-C6` 协处理器
+- `ESP-Hosted + esp_wifi_remote`
+
+因此：
+
+- 不打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
+- 联网异常优先从 Hosted / Remote 组合排查
+- 不要按普通 `esp_wifi` 直驱板型的直觉推断问题
+
+### 首配与企业网络都是一等场景
+
+`network_service` 当前已经纳入：
+
+- `STA`
+- 企业认证
+- 门户元数据
+- 配置热点回退
+
+这说明后续改动不能只围绕“连上家庭 Wi-Fi”来设计。
+
+## 配置网页约定
+
+当前配置网页追求的是：
+
+- 单文件
+- 少接口
+- 可抓包
+- 能在 bring-up 阶段稳定使用
+
+因此后续如果继续扩展配置页，应优先保持接口简单和可诊断，而不是先追求前端框架化。
 
 ## 工程操作约定
 
 ### `ESP-IDF` 工程动作优先 MCP
 
-仓库 `AGENTS.md` 已把这条写成显式规则，当前会话事实也支持它：
+当前会话已确认：
 
 - `project://config` 可读
 - `project://status` 本次读取超时
 
-因此实际执行约定应是：
+因此工程操作的正确约定仍是：
 
-- 先用 MCP
-- 区分“超时”与“失败”
-- MCP 不可用或不支持时明确回退 CLI
-- 回退原因必须写清楚
+- 优先 MCP
+- 区分“资源超时”和“工程失败”
+- MCP 不可用时明确回退 CLI，并写明原因
 
-### 构建 / 配置改动后要回归
+### 改配置后最小回归
 
-涉及以下内容时，不能只看代码 diff：
+涉及这些内容时，不能只看代码 diff：
 
-- 组件依赖
 - `sdkconfig.defaults`
 - 分区表
-- 显示链路
-- Hosted Wi-Fi 配置
+- Hosted / Remote 组合
+- UI 字体 / allocator / 显示缓冲
 
-最小回归路径应是：
+最小回归仍应是：
 
 1. `reconfigure`
 2. `build`
-3. 需要时 `flash monitor`
-
-## 文档约定
-
-### `.planning/codebase` 描述当前工作树事实
-
-当前仓库长期处于边做边验证状态，因此 `.planning/codebase` 不应假装自己只描述“最后一次已提交版本”。
-
-当前更合适的约定是：
-
-- `last_mapped_commit` 记录提交基线
-- 正文明确说明是否纳入当前未提交实现
-- 发现文档与工作树不一致时优先刷新映射，而不是套用旧结论
-
-### canonical 文档留在 `README.md` 与 `docs/`
-
-当前项目文档层次已经形成：
-
-- `README.md`
-- `docs/*.md`
-- `.planning/codebase/*.md`
-- `.planning/research/*.md`
-
-前两者面向项目使用与设计；后两者更偏 agent / 工程内部参考。
+3. 涉及显示或网络关键路径时上板验证

@@ -1,124 +1,104 @@
 ---
-last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+last_mapped_commit: f4a155a1d23a3aa8ca4e7cb568217b35c1d5a510
 mapped_at: 2026-05-17
 ---
 
 # TESTING
 
-## 当前测试现实
+## 当前测试形态
 
-这个仓库目前没有完善的自动化测试护栏：
+当前仓库仍然没有：
 
-- 没有单元测试
-- 没有组件测试
-- 没有 CI
-- 没有后端协议测试夹具
+- 单元测试
+- 组件测试
+- CI
+- 自动化文档校验流水线
 
-因此当前验证仍以工程构建和上板回归为主。
+因此验证主要依赖：
 
-## 当前可用验证层级
+- 工程级 `reconfigure`
+- 工程级 `build`
+- 必要时 `flash monitor`
+- 人工代码核对
+- 板上回归
 
-### 1. 配置与工程状态验证
+## 与当前实现匹配的最小验证面
 
-当前会话已验证：
+### 配置模型
 
-- `ESP-IDF MCP` 资源已注册
-- `project://config` 可读
-- `project://config` 返回：
-  - `project_path = E:/esp32_ai_monitor`
-  - `idf_version = v6.0.1`
-  - `target = esp32p4`
-  - `build_dir = E:/esp32_ai_monitor/build`
+涉及 `app_config_service` 的改动时，至少应验证：
 
-`project://status` 本次读取在 120 秒窗口内超时，因此当前应把它视为“资源读取超时”，而不是直接视为“工程状态异常”。
+- 默认值能从 `sdkconfig.defaults` 正常装配
+- 保存前校验能拦截越界或非法输入
+- 运行时保存不会破坏已有配置结构
 
-### 2. 构建产物验证
+### 网络层
 
-当前 `build/` 目录存在这些关键产物：
+涉及 `network_service` 的改动时，至少应验证：
 
-- `esp32_ai_monitor.elf`
-- `esp32_ai_monitor.bin`
-- `esp32_ai_monitor.map`
-- `compile_commands.json`
-- `project_description.json`
+- `STA` / `SoftAP` 模式选择正确
+- 企业认证配置能通过校验
+- 门户状态和网络状态不会互相覆盖
+- 页面与配置网页都能读到一致快照
 
-从时间戳看，最近一轮成功镜像生成时间是：
+### Provider 层
 
-- `2026-05-17 10:52:40`
+涉及 `provider_service` 的改动时，至少应验证：
 
-这说明工程至少在当前依赖 / 配置组合下已经成功出过镜像。
+- 无凭据时能稳定退回 idle / not ready 状态
+- 远端异常会反映到 `status_text` 与 HTTP 状态统计
+- 增量与小时统计不会因为无效响应崩坏
 
-### 3. 板级回归验证
+### 配置网页
 
-对本项目来说，真正高价值的验证不是只看编译成功，而是这些上板验收动作：
+涉及 `config_web_service` 的改动时，至少应验证：
 
-1. 屏幕点亮
-2. 背光正常
-3. 页面创建成功
-4. 首帧不因 `TinyTTF` / allocator / `PSRAM` 路径复位
-5. `Wi-Fi` 状态能进入连接流程
-6. `SSID` / `IP` / `DNS` / `RSSI` / 信道等字段能稳定刷新
+- `/api/config` 读写正常
+- `/api/status` 输出与 UI 一致
+- `/api/portal/complete` 能正确推进门户状态
+- `/api/restart` 行为明确
 
-## 当前推荐验证命令
+### UI
 
-按仓库约定，优先 MCP；若需要 CLI，则 Windows / PowerShell 下的最小命令为：
+涉及 `ui_service` 的改动时，至少应验证：
 
-```powershell
-idf.py -C "E:\esp32_ai_monitor" reconfigure
-```
+- 首帧不会因 `TinyTTF` / allocator / `PSRAM` 组合复位
+- 主屏能展示网络与 provider 状态
+- 刷新周期切换正常
+- 文本变化检测不会卡死或漏更新
 
-```powershell
-idf.py -C "E:\esp32_ai_monitor" build
-```
+## 工程动作验证
 
-```powershell
-idf.py -C "E:\esp32_ai_monitor" -p COM7 flash monitor
-```
+按仓库约定，`ESP-IDF` 工程动作优先使用 MCP。当前会话的实际情况是：
 
-如果是 agent 执行：
+- `project://config` 读取成功
+- `project://status` 在资源读取阶段超时
 
-- 先确认 MCP 是否可用
-- 再决定是否退回 CLI
-- 回退时记录原因
+这意味着当前不能把 “`status` 资源超时” 简化成 “MCP 不可用”。后续验证应区分：
 
-## UI 路径的专项验证点
+- MCP 可用
+- 某资源 / 某长耗时动作超时
+- 工程本身失败
 
-当前 `wifi_info_screen.c` 已经引入更复杂的字体与布局逻辑，因此 UI 回归应重点看：
+## 上板验证仍然是最终闭环
 
-- `Heap[before-fonts]` / `Heap[after-fonts]` / `Heap[first-refresh]` 日志
-- 首帧是否触发 `SW_CPU_RESET`
-- 页面定时刷新是否稳定
-- 是否因重复重排大字号文本触发 watchdog
+当前项目属于显示链路、Hosted Wi-Fi 链路和本地网页都参与的嵌入式系统。只通过静态代码阅读和构建成功，仍不足以证明行为正确。
 
-这部分验证比传统“能不能点亮屏幕”更重要，因为它直接覆盖了当前最脆弱的运行时链路。
+对这些改动，最终仍需要上板验证：
 
-## Hosted Wi-Fi 路径的专项验证点
+- 显示路径
+- 网络接入
+- 门户状态切换
+- 配置网页可达性
+- provider 轮询表现
 
-联网验证时优先确认：
+## 当前验证缺口
 
-- `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
-- `# CONFIG_ESP_HOST_WIFI_ENABLED is not set`
-- Hosted / Remote 路线没有回退到本地 `esp_wifi`
+这次映射确认的主要测试缺口包括：
 
-如果日志出现这些现象，要先查配置路线而不是先改业务代码：
+- 没有 provider 响应夹具
+- 没有配置网页接口自动化回归
+- 没有网络状态机自动化覆盖
+- 没有 UI 内存峰值或 watchdog 回归工具链
 
-- `OS adapter function version error`
-- `Failed to unregister Rx callbacks`
-- `esp_wifi_init failed`
-- `net80211` 风格异常
-
-## 文档验证约定
-
-对于 `.planning/codebase` 和 `docs/` 的刷新，当前最小验证是：
-
-- 内容与源码路径一致
-- 关键配置值与 `sdkconfig.defaults` / `project://config` 一致
-- 不继续保留“环境不可用”这类已被当前事实推翻的断言
-
-因为没有自动化 verifier 常驻，本仓库的文档正确性仍需要靠：
-
-- 源码核对
-- 配置核对
-- 构建 / 上板事实回归
-
-三者闭环。
+因此每次涉及这些区域的改动，都要把“手工回归成本高”当成现实约束。

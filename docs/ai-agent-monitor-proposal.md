@@ -1,147 +1,83 @@
 # AI Agent Monitor Proposal
 
-## Current Codebase Reality
+## 文档定位
 
-This repository is no longer a blank `ESP-IDF` scaffold.
+这份文档不是描述“当前已经实现了什么”，而是描述在当前本地工作树基础上，下一阶段可以如何把项目推进成更完整的 AI / 服务监控终端。
 
-Current working-tree facts:
+当前已实现的基础能力是：
 
-- The project target is `esp32p4`.
-- `main/main.c` boots a real UI component and a real Wi-Fi service component.
-- `components/network_service` already manages Wi-Fi station lifecycle and state snapshots.
-- `components/ui_service` already renders a board-local `LVGL` Wi-Fi information page using the official Waveshare `BSP`.
-- `sdkconfig.defaults` already encodes a `32MB` flash baseline, `PSRAM`, the `ESP-Hosted + esp_wifi_remote` route, and `CONFIG_LV_USE_CLIB_MALLOC=y`.
-- `main/idf_component.yml` now points several board dependencies at project-local override components.
+- 统一配置模型
+- 网络接入与门户状态机
+- provider 轮询首版
+- 板上主监控屏
+- 本地配置网页
 
-So the repository has moved past “empty project planning” and is now in an early bring-up implementation phase.
+后续 proposal 应建立在这套基础之上，而不是回退到早期单功能诊断思路。
 
-## Product Positioning
+## 推荐产品方向
 
-The recommended product positioning still holds:
+维持当前定位：
 
-- The board is a dedicated monitoring and control terminal for an AI Agent running elsewhere.
-- The AI Agent itself should run on a PC, local server, NAS, or cloud backend.
-- The board should focus on:
-  - network connectivity
-  - local touch UI
-  - status display
-  - event display
-  - lightweight remote control entry points
+- 板子负责本地监控与配置
+- 远端服务负责 AI / 业务执行
+- 固件优先做好状态聚合、诊断、告警和少量控制
 
-Not recommended for the current product direction:
+不建议把下一阶段主线改成“在板上直接运行完整大模型或重型 agent”。
 
-- full on-device LLM inference
-- trying to make the ESP32-P4 board both the heavy AI runtime and the polished operator console
+## 下一阶段可交付
 
-## What Exists Today
+### 1. 更清晰的监控域模型
 
-### Board / UI bring-up
+在现有 `provider_service` 基础上，把状态域进一步整理成：
 
-Already implemented in the current codebase:
+- 设备网络状态
+- 门户 / 首配状态
+- provider / quota 状态
+- 远端服务健康状态
+- 最近告警与事件摘要
 
-- display startup through `waveshare/esp32_p4_wifi6_touch_lcd_4b`
-- backlight enable
-- `LVGL` object tree creation
-- embedded `TinyTTF` font loading
-- periodic screen refresh
-- a richer board-style Wi-Fi diagnostics layout in the current working tree
+### 2. 多页面或多面板导航
 
-### Wi-Fi state pipeline
+在当前主监控屏基础上扩展：
 
-Already implemented:
+- 总览页
+- 网络诊断页
+- Provider 状态页
+- 配置入口页或配置页跳转提示
 
-- Wi-Fi station initialization
-- event-driven state transitions
-- IP / DNS / MAC / RSSI / channel snapshot collection
-- screen-side rendering of the snapshot
+### 3. Provider 扩展
 
-### Build / toolchain posture
+把当前单 provider 首版扩展成可演进框架：
 
-Current confirmed facts:
+- 保留统一配置模型
+- 抽象 provider 状态转换
+- 允许增加新的远端服务或账户监控源
 
-- the workspace points at `ESP-IDF v6.0.1`
-- the current session can read `ESP-IDF MCP` resources such as `project://config`
-- `project://status` timed out in this session, so MCP should be treated as available but timeout-sensitive rather than unavailable
-- the project already has recent build artifacts under `build/`
+### 4. 告警与控制动作
 
-So the environment constraint is no longer “SDK unusable”; the more accurate constraint is “MCP and build validation must distinguish timeout from actual failure.”
+后续可加入：
 
-### Missing product layers
+- provider 异常提示
+- 网络掉线提示
+- 门户未完成提示
+- 手动刷新或简单控制动作
 
-Still missing:
+## 不建议的方向
 
-- backend polling
-- AI agent heartbeat model
-- alert feed
-- action / control flows
-- a multi-page monitor dashboard
+在当前阶段，不建议优先做这些事情：
 
-## Recommended Firmware Architecture
+- 重写整套板级驱动
+- 绕开官方 `BSP`
+- 在没有测试护栏的情况下大规模重构 Hosted 路线
+- 把项目描述成“完整 AI 终端已经成型”
 
-### Keep
+## 进入下一阶段前的前提
 
-- thin `app_main`
-- separate `network_service`
-- separate `ui_service`
-- official board `BSP`
-- hosted Wi-Fi configuration as the baseline network route
+推进 proposal 前，建议先确保：
 
-### Add next
+- 当前主监控屏稳定
+- 配置网页能可靠保存关键配置
+- provider 首版轮询在真实网络条件下可用
+- Hosted / Remote 路线不再处于明显不稳定状态
 
-- `backend_client`
-- `agent_state`
-- `settings_store`
-- optional `touch_service` split if interaction complexity grows
-
-## Constraints That Matter Now
-
-### Hosted Wi-Fi route
-
-The board should still be understood as:
-
-- `ESP32-P4` for UI, display, touch, and application logic
-- onboard `ESP32-C6` for `Wi-Fi 6 / BLE`
-
-That means networking work should continue from the `ESP-Hosted + esp_wifi_remote` baseline, not from a “plain local `esp_wifi` board” assumption.
-
-### UI memory and first-frame stability
-
-The UI path now depends on:
-
-- `PSRAM`
-- `TinyTTF`
-- `LVGL` heap behavior
-- avoiding redundant large-font relayout during refresh
-
-So any future dashboard work should treat font, allocator, and refresh behavior as a first-class stability concern rather than as a cosmetic afterthought.
-
-### Local override components
-
-The project now carries local overrides for several board-related components. That is acceptable for the current `ESP-IDF v6.0.1` compatibility posture, but it introduces a maintenance constraint:
-
-- keep the overrides minimal
-- track upstream shape closely
-- avoid turning the repo into a permanent private fork of board support code
-
-## Recommended Next Milestone
-
-1. Keep the existing Wi-Fi page as a diagnostics screen.
-2. Add a minimal `backend_client` using `HTTP polling`.
-3. Introduce a compact monitor state model:
-  - backend online / offline
-  - last heartbeat
-  - active task
-  - last error
-  - latency
-4. Add a simple overview screen above the current Wi-Fi diagnostics page.
-
-## V1 UI Scope
-
-Recommended pages:
-
-- overview page
-- Wi-Fi diagnostics page
-- alerts / events page
-- basic settings page
-
-The current `wifi_info_screen` should evolve into a support page, not remain the final home screen.
+只有在这些基础稳住之后，后续的产品层扩展才值得继续投入。

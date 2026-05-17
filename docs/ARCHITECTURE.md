@@ -2,149 +2,147 @@
 
 ## 产品定位
 
-本项目面向 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`，当前推荐架构不是“板上直接运行完整 AI Agent”，而是：
+本项目面向 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`，当前目标是构建一个板上监控与配置终端，而不是在板子上直接运行完整 AI Agent。
 
-- 板子负责触摸交互、联网、状态展示和简单控制
-- 真正的 AI Agent 在 PC、本地服务器、NAS 或云端运行
-- 固件优先做“监控终端”和“诊断控制台”
+板子的职责优先是：
 
-这意味着当前仓库的目标是先做：
+- 展示设备与远端服务状态
+- 提供触摸交互和配置入口
+- 提供本地网络诊断和少量控制动作
 
-- 稳定的板级显示
-- 可靠的网络状态
-- 可维护的页面状态管理
-- 后续可接入的后端状态拉取与控制动作
+真正的 AI / 监控后端仍然应运行在外部环境。
 
-## 当前固件层次
+## 当前运行时分层
 
-### 1. 启动入口
+当前工作树已经形成五层运行时结构：
 
-入口是 `main/main.c`，当前只做两件事：
+1. 启动编排层
+   - `main/main.c`
+2. 配置中心层
+   - `components/app_config_service`
+3. 网络接入层
+   - `components/network_service`
+4. 外部 provider 轮询层
+   - `components/provider_service`
+5. 本地交互层
+   - `components/config_web_service`
+   - `components/ui_service`
+
+## 启动顺序
+
+当前 `app_main()` 依次启动：
 
 1. `wifi_info_screen_start()`
 2. `network_service_start()`
+3. `provider_service_start()`
+4. `config_web_service_start()`
 
-`app_main()` 保持轻量是当前仓库的核心约束之一。
+注意：
 
-### 2. 网络服务层
+- `ui_service` 的主实现已经在 `monitor_dashboard_screen.c`
+- 但公开入口名仍沿用 `wifi_info_screen_start()`
+- 这属于当前命名过渡态
 
-`components/network_service` 负责：
+## 配置中心
 
-- 初始化 `NVS`
-- 初始化默认事件循环
-- 创建默认 `STA` `netif`
-- 设置主机名
-- 启动 `Wi-Fi Station`
-- 处理连接 / 断开 / 获取 IP 事件
-- 聚合 `SSID`、`BSSID`、`IP`、`DNS`、`MAC`、`RSSI`、信道和认证信息
+`app_config_service` 是当前架构中心。它统一维护：
 
-对外暴露：
+- Wi-Fi 配置
+- 企业认证配置
+- 门户元数据
+- 配置热点参数
+- provider 参数
+- UI 刷新间隔
 
-- `network_service_start()`
-- `network_service_get_snapshot()`
+默认值来自 `sdkconfig.defaults` / `sdkconfig`，运行时覆盖则通过 `NVS` 持久化。网络层、provider 层、配置网页和 UI 都消费同一份配置模型。
 
-它不创建任何 UI，只提供状态快照。
+## 网络层
 
-### 3. UI / 显示层
+`network_service` 当前不是简单的“连上一个热点”，而是承接这条接入路径：
 
-`components/ui_service` 负责：
+- `STA` 连网
+- `WPA2-PSK`
+- `WPA2-Enterprise`
+- 公司门户附加状态
+- 配置 `SoftAP` 回退
+
+它对外导出统一快照，供主屏和配置网页复用。
+
+## Provider 层
+
+`provider_service` 负责轮询外部 provider，并把结果整理成板上可消费的统一状态。当前真实实现只有 `AQI` provider，但接口边界已经通用化：
+
+- provider 名称来自配置
+- `base_url` 与 `endpoint_path` 来自配置
+- token 与用户头来自配置
+- 快照包含状态、请求统计、最近成功时间和增量信息
+
+## 配置网页
+
+`config_web_service` 当前提供：
+
+- 板上 HTML 配置页
+- 当前配置读取接口
+- 当前状态读取接口
+- 保存配置接口
+- 门户完成接口
+- 重启接口
+
+它的定位是 bring-up 与现场维护入口，不是完整前后端应用。
+
+## 板上主屏
+
+`ui_service` 当前主职责是：
 
 - 启动 `Waveshare BSP`
-- 打开背光
 - 初始化 `LVGL`
-- 从嵌入式 `TTF` 资源创建字体
-- 创建 Wi-Fi 诊断页对象树
-- 定时拉取网络快照并刷新页面
+- 加载字体
+- 创建主监控视图
+- 周期性拉取网络与 provider 快照
 
-当前 UI 已经不是简单的单块文本页，而是由：
+当前主屏更偏“监控总览 + 诊断面板”，重点字段包括：
 
-- 主状态面板
-- 辅助状态面板
-- 数字展示区
-- 详情文本区
+- 网络状态
+- 门户状态
+- provider 状态
+- 百分比或额度值
+- delta 信息
+- 底部详情文本
 
-组成的诊断型页面。
+## 板级和无线硬约束
 
-## 当前外部依赖结构
-
-### `ESP-IDF` 与工具链
+当前架构依赖这些硬约束：
 
 - `ESP-IDF v6.0.1`
 - `esp32p4`
-- `CMake + Ninja`
-- `riscv32-esp-elf-gcc`
-
-### Board Support / UI
-
-- `waveshare/esp32_p4_wifi6_touch_lcd_4b`
-- `waveshare/esp_lcd_st7703`
-- `espressif/esp_lvgl_port`
-- `lvgl/lvgl`
-
-### Wireless / Hosted
-
-- `espressif/esp_hosted`
-- `espressif/esp_wifi_remote`
-- 板载 `ESP32-C6`
-
-## Hosted Wi-Fi 设计结论
-
-这块板的联网链路应理解为：
-
-- `ESP32-P4` 负责主控与 UI
-- `ESP32-C6` 提供 `Wi-Fi 6 / BLE`
-- 主工程通过 `ESP-Hosted + esp_wifi_remote` 使用无线
-
-所以当前架构约束是：
-
-- 不要把无线能力当成 `P4` 原生片上 Wi-Fi
-- 不要打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
-- 排查联网问题时先检查 Hosted / Remote 路线是否跑偏
-
-## 配置与内存架构结论
-
-当前 `sdkconfig.defaults` 已经把这些设计意图固定下来：
-
 - `32MB flash`
-- 自定义分区表
 - `PSRAM`
-- Hosted / Wi-Fi Remote
-- `LVGL TinyTTF`
-- `CLIB malloc`
+- `LVGL + TinyTTF + CLIB malloc`
+- `ESP-Hosted + esp_wifi_remote`
 
-这意味着当前显示路径依赖：
+无线链路的正确理解仍然是：
 
-- `PSRAM`
-- `TinyTTF`
-- `CLIB malloc`
+- `ESP32-P4` 负责主控、UI 和业务逻辑
+- 板载 `ESP32-C6` 负责无线协处理
 
-而不是最小内存池配置。
+不要把本项目按“P4 本地原生 Wi-Fi 板型”理解。
 
-## 当前缺失的产品层
+## 当前阶段判断
 
-当前仓库已经完成：
+当前项目已经完成：
 
-- 显示 bring-up
-- Wi-Fi 状态采集
-- 诊断型页面
+- 板级显示 bring-up
+- 统一配置模型
+- 网络状态机
+- provider 轮询首版
+- 配置网页
+- 主监控屏
 
-但还没有完成：
+但尚未完成：
 
-- `backend_client`
-- `agent_state`
-- 后端 `HTTP polling`
-- 告警 / 控制动作
-- 多页面监控仪表盘
+- 多 provider 扩展
+- 更完整的控制面
+- 多页面导航
+- 自动化测试与 CI
 
-所以当前更准确的阶段判断是：
-
-- 已跨过空工程阶段
-- 仍处于板级 bring-up 和 Wi-Fi 诊断页阶段
-
-## 推荐后续扩展顺序
-
-1. 保持当前 Wi-Fi 详情页作为诊断页
-2. 增加最小 `backend_client`
-3. 引入监控状态模型
-4. 在当前诊断页之上增加总览页
-5. 再接入告警和控制入口
+因此它已经跨过早期单功能诊断原型阶段，但仍处在监控终端产品化早期。

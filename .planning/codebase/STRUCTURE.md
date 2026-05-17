@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+last_mapped_commit: f4a155a1d23a3aa8ca4e7cb568217b35c1d5a510
 mapped_at: 2026-05-17
 ---
 
@@ -10,23 +10,23 @@ mapped_at: 2026-05-17
 - `CMakeLists.txt`
   - 根工程入口
 - `main/`
-  - 应用入口组件与依赖声明
+  - 应用入口组件与依赖注册
 - `components/`
-  - 自定义业务组件与项目内 override 组件
+  - 业务组件与项目内 override 组件
 - `docs/`
-  - 面向项目使用与设计的 canonical 文档
+  - 面向项目使用与设计的文档
 - `.planning/`
-  - 代码映射、研究记录与历史 handoff
+  - codebase map、研究记录与历史 handoff
 - `managed_components/`
-  - `ESP-IDF` 组件管理器解析后的托管依赖
+  - `ESP-IDF` 组件管理器解析出的托管依赖
 - `build/`
-  - 当前机器生成态构建目录
+  - 构建产物目录
 - `.vscode/`
-  - 工作区级 `ESP-IDF` / OpenOCD / 串口设置
+  - 工作区开发配置
 
-## main 组件
+## main 入口组件
 
-目录结构：
+文件：
 
 - `main/CMakeLists.txt`
 - `main/main.c`
@@ -34,165 +34,169 @@ mapped_at: 2026-05-17
 
 职责：
 
-- 注册入口源文件
-- 声明 `network_service` 与 `ui_service`
-- 声明 Hosted / `LVGL` / `BSP` 相关托管依赖
-- 指定本地 override 组件路径
+- 保持 `app_main()` 极薄
+- 串联各业务服务启动
+- 声明项目主入口依赖的本地组件
 
-当前 `main/main.c` 极薄，只负责调用：
+当前 `main/CMakeLists.txt` 直接依赖：
 
-- `wifi_info_screen_start()`
-- `network_service_start()`
+- `app_config_service`
+- `config_web_service`
+- `network_service`
+- `provider_service`
+- `ui_service`
+
+这说明主入口已经围绕“配置、网络、provider、配置网页、UI”五个服务层展开。
 
 ## 自定义业务组件
+
+### `components/app_config_service`
+
+文件：
+
+- `components/app_config_service/CMakeLists.txt`
+- `components/app_config_service/Kconfig.projbuild`
+- `components/app_config_service/app_config_service.c`
+- `components/app_config_service/include/app_config_service.h`
+
+职责：
+
+- 定义统一运行时配置结构
+- 从 Kconfig 默认值构建配置基线
+- 通过 `NVS` 持久化运行时覆盖
+- 对配置做长度和字段级校验
+
+这是当前仓库的配置中心组件。
 
 ### `components/network_service`
 
 文件：
 
 - `components/network_service/CMakeLists.txt`
-- `components/network_service/Kconfig.projbuild`
 - `components/network_service/network_service.c`
 - `components/network_service/include/network_service.h`
 
 职责：
 
-- `Wi-Fi Station` 生命周期管理
-- 连接事件处理
-- 网络详情快照导出
-- 暴露 `menuconfig` 业务参数
+- 启动 `STA`
+- 可选启用配置 `SoftAP`
+- 处理企业 Wi-Fi 认证与门户状态
+- 聚合网络快照供 UI 与配置网页复用
 
-当前 `Kconfig.projbuild` 已暴露：
+当前组件不再有独立 `Kconfig.projbuild`，而是改为消费统一配置组件。
 
-- `CONFIG_AI_MONITOR_WIFI_SSID`
-- `CONFIG_AI_MONITOR_WIFI_PASSWORD`
-- `CONFIG_AI_MONITOR_WIFI_HOSTNAME`
-- `CONFIG_AI_MONITOR_UI_REFRESH_MS`
+### `components/provider_service`
+
+文件：
+
+- `components/provider_service/CMakeLists.txt`
+- `components/provider_service/provider_service.c`
+- `components/provider_service/include/provider_service.h`
+
+职责：
+
+- 启动远端 provider 轮询任务
+- 采集外部订阅或额度数据
+- 归一化为板上监控快照
+- 维护增量、成功率、刷新间隔等统计
+
+### `components/config_web_service`
+
+文件：
+
+- `components/config_web_service/CMakeLists.txt`
+- `components/config_web_service/config_web_service.c`
+- `components/config_web_service/include/config_web_service.h`
+
+职责：
+
+- 启动 `esp_http_server`
+- 提供单文件配置页
+- 提供配置读写与状态查询 REST 接口
+- 负责门户完成与设备重启这类运维动作入口
 
 ### `components/ui_service`
 
 文件：
 
 - `components/ui_service/CMakeLists.txt`
-- `components/ui_service/wifi_info_screen.c`
+- `components/ui_service/monitor_dashboard_screen.c`
 - `components/ui_service/include/wifi_info_screen.h`
+- `components/ui_service/include/monitor_dashboard_screen.h`
 - `components/ui_service/assets/jnr_sb_font.ttf`
 
 职责：
 
-- 启动板级显示
-- 打开背光
-- 初始化 `LVGL` 页面对象树
-- 装载嵌入式 `TinyTTF` 字体资源
-- 周期性拉取网络快照并渲染
+- 初始化板级显示与 `LVGL`
+- 渲染板上主监控视图
+- 周期性拉取网络与 provider 快照
+- 管理字体和文本更新策略
 
-当前 `CMakeLists.txt` 还通过：
+注意：
 
-- `target_add_binary_data(${COMPONENT_LIB} "assets/jnr_sb_font.ttf" BINARY RENAME_TO jnr_sb_font_ttf)`
-
-把字体资源编进固件，这意味着字体资产已经是 UI 组件的正式组成部分，而不是临时外部文件。
+- 公开入口头文件仍保留 `wifi_info_screen.h`
+- 但主要实现已迁移到 `monitor_dashboard_screen.c`
+- 这是当前工作树的命名过渡态
 
 ## 项目内 override 组件
 
-当前 `components/` 下除了业务组件，还存在 3 个本地 override：
+当前仓库保留了多个本地 override 目录，用来兼容 `ESP-IDF v6.0.1` 与官方组件路线：
 
 - `components/espressif__esp_codec_dev`
 - `components/waveshare__esp_lcd_st7703`
 - `components/waveshare__esp32_p4_wifi6_touch_lcd_4b`
 
-它们的角色是：
+这些目录不是业务逻辑主战场，但属于构建链路的关键现实。
 
-- 对齐 `ESP-IDF v6.0.1`
-- 修补 registry 组件与当前 SDK 的兼容面
-- 保持官方组件命名与接口习惯
+## 托管依赖目录
 
-这类目录结构说明仓库已经进入“可维护的本地 patch 层”阶段，而不是单纯依赖托管组件原样输入。
-
-## 配置文件层次
-
-- `sdkconfig.defaults`
-  - 可提交的持久基线
-- `sdkconfig`
-  - 当前机器的生效态
-- `sdkconfig.old`
-  - 历史配置快照
-- `partitions_32mb_singleapp.csv`
-  - 当前自定义分区表
-- `.vscode/settings.json`
-  - 当前工作区本地开发设置
-
-这几份文件之间的边界已经比较清晰：
-
-- 设计意图放 `sdkconfig.defaults`
-- 机器态放 `sdkconfig`
-- IDE 辅助放 `.vscode/settings.json`
-
-## 文档层次
-
-### 代码映射与研究
-
-- `.planning/codebase/ARCHITECTURE.md`
-- `.planning/codebase/STRUCTURE.md`
-- `.planning/codebase/STACK.md`
-- `.planning/codebase/INTEGRATIONS.md`
-- `.planning/codebase/CONVENTIONS.md`
-- `.planning/codebase/TESTING.md`
-- `.planning/codebase/CONCERNS.md`
-- `.planning/research/2026-04-27-waveshare-esp32-p4-wifi6-touch-lcd-4b.md`
-- `.planning/research/2026-04-27-esp32-p4-wifi-bringup-pitfalls.md`
-- `.planning/HANDOFF-2026-04-27-wifi-blocker.md`
-
-### 项目 canonical 文档
-
-- `README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/GETTING-STARTED.md`
-- `docs/DEVELOPMENT.md`
-- `docs/TESTING.md`
-- `docs/CONFIGURATION.md`
-
-### 现有 hand-written / proposal 文档
-
-- `docs/ai-agent-monitor-proposal.md`
-
-该文件不属于 map-codebase 的 7 份固定输出，但属于 docs-update 需要一起校准的现有项目文档。
-
-## 生成态目录
-
-### `managed_components/`
-
-这里反映的是锁定后的第三方依赖实际落地态，当前可以看到的关键组件包括：
+`managed_components/` 当前可见的关键组件包括：
 
 - `espressif__esp_hosted`
 - `espressif__esp_wifi_remote`
 - `espressif__esp_lvgl_port`
 - `espressif__usb`
 - `lvgl__lvgl`
+- 其他 `ESP-IDF` 组件管理器解析出的依赖
 
-它描述的是“当前锁下解析结果”，不是业务代码主战场。
+它反映的是锁文件驱动下的第三方依赖落地态。
 
-### `build/`
+## 配置相关文件
 
-当前 `build/` 已包含有效生成物，例如：
+关键配置文件：
 
-- `esp32_ai_monitor.elf`
-- `esp32_ai_monitor.bin`
-- `esp32_ai_monitor.map`
-- `compile_commands.json`
-- `project_description.json`
-- `hints.yml`
+- `sdkconfig.defaults`
+  - 可提交的持久配置基线
+- `sdkconfig`
+  - 当前机器生效态
+- `sdkconfig.old`
+  - 旧配置快照
+- `partitions_32mb_singleapp.csv`
+  - 当前分区表
 
-从时间戳看，最近一轮成功产物落在 `2026-05-17 10:52:40`。
+当前配置模型已不是“只靠 `sdkconfig`”的老结构，而是：
 
-## 当前结构缺口
+- 构建期默认值来自 `sdkconfig.defaults`
+- 运行时覆盖来自 `NVS`
+- 使用期配置入口来自 `config_web_service`
 
-按项目定位，后续大概率还会新增这些目录或组件，但当前尚不存在：
+## 文档层次
 
-- `components/backend_client`
-- `components/agent_state`
-- `components/settings_store`
-- `components/touch_service`
-- 后端协议测试夹具
-- 自动化测试目录
+当前文档分为三层：
 
-所以当前仓库结构已经跨过“空工程”，但还没有进入“完整监控终端产品”阶段。
+- `README.md` 与 `docs/*.md`
+  - 面向项目使用、设计和开发流程
+- `.planning/codebase/*.md`
+  - 面向 agent / 工程分析的结构化映射
+- `.planning/research/*.md`
+  - 面向问题复盘和板级研究
+
+这次映射涉及的七份固定输出仍然是：
+
+- `ARCHITECTURE.md`
+- `STRUCTURE.md`
+- `STACK.md`
+- `INTEGRATIONS.md`
+- `CONVENTIONS.md`
+- `TESTING.md`
+- `CONCERNS.md`

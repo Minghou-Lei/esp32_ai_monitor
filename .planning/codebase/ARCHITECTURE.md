@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+last_mapped_commit: f4a155a1d23a3aa8ca4e7cb568217b35c1d5a510
 mapped_at: 2026-05-17
 ---
 
@@ -7,168 +7,198 @@ mapped_at: 2026-05-17
 
 ## 当前运行时结构
 
-当前固件仍处于“板级 bring-up + Wi-Fi 诊断页”阶段，但运行时拓扑已经稳定成三层：
+当前工作树已经不再是“板级显示 + Wi-Fi 详情页”的单链路原型，而是一个围绕统一运行时配置展开的监控终端骨架：
 
 - `main/main.c`
   - 只负责启动编排
+- `components/app_config_service`
+  - 统一维护 Wi-Fi、门户、配置热点、provider 和 UI 刷新配置
 - `components/network_service`
-  - 负责 `Wi-Fi Station` 生命周期与状态快照
+  - 负责 Wi-Fi 接入、企业认证、门户状态与 `SoftAP` 回退
+- `components/provider_service`
+  - 负责外部 provider 轮询、状态归一化和增量统计
+- `components/config_web_service`
+  - 负责板上配置网页与本地 REST 接口
 - `components/ui_service`
-  - 负责 `BSP + LVGL` 显示初始化与详情页渲染
+  - 负责基于 `BSP + LVGL` 的主监控屏渲染
 
-这套结构已经符合“薄入口 + 独立组件”的仓库约束，没有把显示、网络和页面逻辑重新塞回 `app_main()`。
-
-注意：
-
-- 本文映射基于当前工作树，而不是只基于 `HEAD`
-- `last_mapped_commit` 记录的是最近一次提交 `24911b142360e77d719d9db5cfc54443770da247`
-- 当前工作树还包含未提交实现，尤其是 `components/ui_service/wifi_info_screen.c`、`main/idf_component.yml`、`dependencies.lock` 和文档本身
+这套结构符合仓库要求的“薄入口 + 组件化拆分”，业务逻辑没有重新堆回 `main.c`。
 
 ## 启动编排
 
-入口文件是 `main/main.c`，当前顺序固定为：
+当前 `app_main()` 的启动顺序是：
 
 1. `wifi_info_screen_start()`
 2. `network_service_start()`
+3. `provider_service_start()`
+4. `config_web_service_start()`
 
-这意味着显示链路先起来，页面会先进入等待数据状态；随后 `network_service` 开始驱动 `Wi-Fi` 状态机，界面通过定时刷新读取最新快照。
+注意：
 
-这个顺序和当前产品目标一致：
+- `ui_service` 当前实现文件已经切到 `monitor_dashboard_screen.c`
+- 但对外入口名仍沿用 `wifi_info_screen_start()`
+- 文档和后续重构都要把“实现已换、公开 API 名未换”视为当前工作树事实
 
-- 先保证板载显示可见
-- 再让网络状态逐步收敛到 UI
-- 避免把网络初始化失败误判成“屏幕没起来”
+这条启动链反映了当前产品目标：
 
-## 网络服务层
+- 先把主屏点亮，保证设备上电后有可见反馈
+- 再启动网络链路，让页面进入可诊断状态
+- 再挂载 provider 轮询，让远端监控数据进入本地状态模型
+- 最后启动配置网页，给首次配网和参数修正留出口
 
-核心实现位于 `components/network_service/network_service.c`，对外头文件是
-`components/network_service/include/network_service.h`。
+## 配置中心层
 
-当前职责包括：
+`components/app_config_service` 是当前架构的中心点。它维护一份统一的 `app_config_t`，供 UI、网络和配置网页共同消费，避免多个组件各自保存一份私有副本。
 
-- 初始化 `NVS`
-- 初始化默认事件循环
-- 创建默认 `STA` `netif`
-- 设置主机名
-- 启动 `Wi-Fi Station`
-- 处理 `WIFI_EVENT_STA_START`
-- 处理 `WIFI_EVENT_STA_CONNECTED`
-- 处理 `WIFI_EVENT_STA_DISCONNECTED`
-- 处理 `IP_EVENT_STA_GOT_IP`
-- 聚合 `SSID`、`BSSID`、`IPv4`、`DNS`、`MAC`、`RSSI`、信道、认证方式和加密方式
+当前配置模型至少覆盖这些域：
 
-对外暴露的关键接口只有两个：
+- `wifi`
+  - 基本接入参数
+  - 企业认证参数
+  - 门户元数据
+- `config_ap`
+  - `enabled`
+  - `ssid`
+  - `password`
+- `provider`
+  - `kind`
+  - `display_name`
+  - `base_url`
+  - `endpoint_path`
+  - 鉴权与身份相关参数
+  - `refresh_interval_ms`
+- `ui_refresh_interval_ms`
 
-- `network_service_start()`
-- `network_service_get_snapshot()`
+默认值来源是 `sdkconfig.defaults` / `sdkconfig`，运行时覆盖通过 `NVS` 持久化。配置保存前还会走统一校验。
 
-其中 `network_service_get_snapshot()` 会在持锁状态下补齐运行时字段，因此当前 UI 可以安全地周期性拉取整份快照，而不需要关心底层事件和同步细节。
+## 网络接入层
+
+`components/network_service` 当前承担的不是简单 `STA` 连网，而是“监控终端接入状态机”：
+
+- 根据运行时配置启动 `STA`
+- 支持 `WPA2-PSK` 与 `WPA2-Enterprise`
+- 维护公司门户附加状态
+- 在需要时开启本地配置热点
+- 对外导出统一 `network_service_snapshot_t`
+
+当前状态机的关键枚举包括：
+
+- `NETWORK_SERVICE_MODE_STA_ONLY`
+- `NETWORK_SERVICE_MODE_APSTA_FALLBACK`
+- `NETWORK_SERVICE_STATE_UNCONFIGURED`
+- `NETWORK_SERVICE_STATE_IDLE`
+- `NETWORK_SERVICE_STATE_CONNECTING`
+- `NETWORK_SERVICE_STATE_CONNECTED`
+- `NETWORK_SERVICE_STATE_DISCONNECTED`
+- `NETWORK_SERVICE_STATE_PORTAL_REQUIRED`
+- `NETWORK_SERVICE_STATE_CONFIG_AP`
+
+这说明网络层已经开始服务“首配、企业网、门户、诊断”这条完整路径，而不是只处理单一家庭 Wi-Fi。
+
+## Provider 轮询层
+
+`components/provider_service` 负责把外部监控源折叠成一个板上可消费的快照。当前接口已经明显做成了通用 provider 形状：
+
+- `provider_service_start()`
+- `provider_service_get_snapshot()`
+- `provider_service_request_refresh()`
+
+当前真正实现的 provider 只有 `APP_CONFIG_PROVIDER_AQI`，但模块边界已经不再暴露 AQI 专有命名。它会：
+
+- 从统一配置读取 `base_url`、`endpoint_path`、token 和用户头
+- 通过 `esp_http_client` 轮询远端接口
+- 解析订阅列表
+- 维护抓取次数、成功次数、失败次数、最近 HTTP 状态
+- 计算“自上次成功以来”的增量
+- 维护按小时统计的历史窗口
+
+当前默认端点回退值是 `/api/subscription/self`。
+
+## 配置网页层
+
+`components/config_web_service` 把“设备可配置”从串口 / `menuconfig` 前移到了板上本地网页。当前已注册的接口包括：
+
+- `GET /`
+  - 返回单文件 HTML 配置页
+- `GET /api/config`
+  - 读取当前配置快照
+- `POST /api/config`
+  - 校验并保存配置
+- `GET /api/status`
+  - 返回网络与 provider 运行状态
+- `POST /api/portal/complete`
+  - 把门户状态标记为已完成
+- `POST /api/restart`
+  - 触发设备重启
+
+它的定位很明确：
+
+- 把首次配网和参数修正从固件编译期搬到运行期
+- 所有保存动作仍走 `app_config_service` 的统一校验逻辑
+- 页面保持单文件、接口保持少量，便于抓包与 bring-up 阶段调试
 
 ## UI 与显示层
 
-核心实现位于 `components/ui_service/wifi_info_screen.c`，当前并不是简单文本页，而是一套建立在 `Waveshare BSP` 之上的 `LVGL` 监控面板。
+`components/ui_service` 当前已经演化成“板上主监控屏”，但代码里仍保留 `wifi_info_screen_*` 命名。当前实现要点：
 
-当前实现的关键路径：
+- 通过 `Waveshare BSP` 启动显示
+- 使用内嵌 `TinyTTF` 字体
+- 创建主状态行、次状态行和底部详情区
+- 同时展示网络、门户和 provider 状态
+- 支持 provider 手动刷新
+- 首次刷新使用较短定时，随后切换到配置中的 UI 刷新间隔
+- 只在文本变化时更新 `lv_label`
 
-- 通过 `bsp_display_start_with_config()` 启动显示
-- 打开背光
-- 把 `LVGL` 绘图缓冲放进 `PSRAM`
-- 通过 `target_add_binary_data()` 把 `assets/jnr_sb_font.ttf` 打包进固件
-- 在运行时通过 `TinyTTF` 构建多组字体对象
-- 创建主状态板、辅助状态板和详情区
-- 通过定时刷新读取 `network_service` 快照并更新屏幕
+从字段命名看，当前主屏关注点已经是：
 
-当前未提交 UI 重构已经把页面从“单块详情文本”推进到了更强的站牌式信息结构：
+- `network_status`
+- `portal_status`
+- `provider_status`
+- `badge_label`
+- `badge_subtitle`
+- `numeric_value_label`
+- `details_label`
 
-- 主状态 badge
-- 状态副标题
-- 主展示值
-- 辅助展示值
-- 数字面板
-- 细节文本区
+这和“设备可配置、网络可诊断、provider 可观察”的产品方向一致。
 
-同时加入了两个很重要的运行时约束：
+## 依赖关系特征
 
-- 使用 `heap_caps_*` 打点内部 SRAM / `SPIRAM`
-- 仅在文本变化时调用 `lv_label_set_text()`，避免 `TinyTTF` 大字号对象在定时器里反复重排导致 `taskLVGL` 持续占用 CPU 并触发 watchdog
+当前最重要的依赖关系不是某个第三方库，而是项目内部围绕 `app_config_service` 形成的扇出：
 
-## 板级与组件依赖层
+- `network_service` 依赖 `app_config_service`
+- `provider_service` 依赖 `app_config_service`
+- `config_web_service` 依赖 `app_config_service`
+- `ui_service` 依赖 `app_config_service`
 
-项目已经不再完全依赖 registry 原样组件，而是使用“registry 版本声明 + 仓库内 override_path”模式：
+同时还出现了一个需要长期盯住的耦合面：
 
-- `espressif/esp_codec_dev`
-  - `override_path: ../components/espressif__esp_codec_dev`
-- `waveshare/esp_lcd_st7703`
-  - `override_path: ../components/waveshare__esp_lcd_st7703`
+- `network_service` 依赖 `provider_service`
+- `provider_service` 依赖 `network_service`
+
+当前工程能解析这组组件关系，但这已经是后续继续演进时需要优先关注的边界风险。
+
+## 板级与 Hosted 约束
+
+当前体系仍建立在这些硬约束上：
+
+- `ESP-IDF v6.0.1`
+- `esp32p4`
 - `waveshare/esp32_p4_wifi6_touch_lcd_4b`
-  - `override_path: ../components/waveshare__esp32_p4_wifi6_touch_lcd_4b`
+- `ESP-Hosted + esp_wifi_remote`
+- `PSRAM`
+- `LVGL + TinyTTF + CLIB malloc`
 
-这些 override 的角色不是自建整套板级抽象，而是：
+其中无线链路的正确理解仍然是：
 
-- 追随官方组件形状
-- 处理 `ESP-IDF v6.0.1` 下的兼容点
-- 保住当前 `ESP32-P4 + Waveshare BSP + LVGL` 路线可编译、可启动
+- `ESP32-P4` 做主控与显示
+- 板载 `ESP32-C6` 提供无线协处理
+- 主工程走 Hosted / Remote 路线，而不是本地原生 Wi-Fi 直驱
 
-当前 `main/idf_component.yml` 还显式声明了：
+## 当前阶段判断
 
-- `espressif/usb`
-- `espressif/esp_wifi_remote`
-- `espressif/esp_hosted`
+截至这次映射，项目更准确的阶段是：
 
-说明当前架构已经把“主控 P4 + 无线协处理 C6”的 hosted 路线当成正式依赖面，而不是临时实验。
+- 已完成：板级显示、统一配置模型、网络接入状态机、provider 轮询骨架、本地配置网页、主监控屏
+- 未完成：后端多 provider 适配、更完整的控制动作、多页面导航、自动化测试和 CI
 
-## 配置与内存架构
-
-当前配置层的关键设计不在 `sdkconfig`，而在 `sdkconfig.defaults`。
-
-已确认的持久意图包括：
-
-- `CONFIG_IDF_TARGET="esp32p4"`
-- `CONFIG_ESPTOOLPY_FLASHSIZE="32MB"`
-- `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_32mb_singleapp.csv"`
-- `CONFIG_SPIRAM=y`
-- `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
-- `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y`
-- `# CONFIG_ESP_HOST_WIFI_ENABLED is not set`
-- `CONFIG_LV_USE_CLIB_MALLOC=y`
-- `CONFIG_LV_USE_TINY_TTF=y`
-
-这里最关键的架构结论是：
-
-- `PSRAM` 不只是性能优化，而是显示路径前置条件
-- `LVGL + TinyTTF` 不能再依赖默认小内存池假设
-- Hosted Wi-Fi 路线和本地 `esp_wifi` 路线必须明确二选一，当前项目选择的是前者
-
-## 工具链与工程操作架构
-
-仓库级 `AGENTS.md` 已把 `ESP-IDF MCP` 设为优先操作路径，当前会话里也确实能读到：
-
-- `project://config`
-- `project://devices`
-
-但当前会话对 `project://status` 的读取在 120 秒窗口内超时，因此当前准确结论不是“MCP 不可用”，而是：
-
-- 资源读取部分可用
-- 长耗时或较重资源读取需要把“工具超时”与“工程失败”分开判断
-
-这会直接影响后续 agent 的行为：
-
-- 先走 MCP
-- MCP 超时或不支持时明确回退 `idf.py`
-- 回退时写明原因和验证结果
-
-## 当前缺口
-
-按产品目标，当前架构还缺这些业务层：
-
-- `backend_client`
-- `agent_state`
-- `settings_store`
-- 监控总览页
-- 告警 / 控制动作
-- 后端状态拉取协议
-
-因此当前架构更接近：
-
-- 已完成板级显示与网络诊断支架
-- 尚未进入完整 AI 监控终端业务层
+所以它已经跨过早期单功能诊断原型阶段，但还没有进入“完整 AI 监控终端产品化”阶段。

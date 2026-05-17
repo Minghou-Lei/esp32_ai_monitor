@@ -1,181 +1,108 @@
 ---
-last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+last_mapped_commit: f4a155a1d23a3aa8ca4e7cb568217b35c1d5a510
 mapped_at: 2026-05-17
 ---
 
 # INTEGRATIONS
 
-## 运行时内部集成
+## 板级集成
 
-### `main` -> `ui_service`
+当前工程和板卡的集成点主要在：
 
-入口 `main/main.c` 在 `app_main()` 里首先调用：
+- `waveshare__esp32_p4_wifi6_touch_lcd_4b`
+- `waveshare__esp_lcd_st7703`
+- `espressif__esp_codec_dev`
 
-- `wifi_info_screen_start()`
+当前项目仍优先复用 `BSP` 和官方组件，而不是自己维护整套裸驱动初始化序列。
 
-这条集成链路负责：
+## Hosted 无线集成
 
-- 启动 `Waveshare BSP`
-- 初始化 `LVGL`
-- 打开背光
-- 构建页面对象树
-- 启动页面定时刷新
+无线链路集成点包括：
 
-### `main` -> `network_service`
-
-随后 `app_main()` 调用：
-
-- `network_service_start()`
-
-这条链路负责把网络运行时带起来，并把状态暴露给 UI 读取。
-
-### `ui_service` -> `network_service`
-
-`components/ui_service/wifi_info_screen.c` 周期性调用：
-
-- `network_service_get_snapshot(&s_snapshot_cache)`
-
-当前 UI 不直接控制 `esp_wifi`，而是完全依赖快照接口。这是当前仓库里最清晰的模块边界之一：
-
-- 网络层生产状态
-- UI 层消费状态
-
-## BSP 与显示集成
-
-当前显示链路优先复用：
-
-- `waveshare/esp32_p4_wifi6_touch_lcd_4b`
-- `waveshare/esp_lcd_st7703`
-- `espressif/esp_lvgl_port`
-
-其中 `ui_service` 对 BSP 的实际依赖包括：
-
-- `bsp_display_start_with_config()`
-- 背光控制
-- `LVGL` 端口初始化
-
-这意味着当前项目没有自建裸显示初始化层，而是把显示 bring-up 绑定在官方板级抽象之上。
-
-## 字体与资源集成
-
-`ui_service` 通过：
-
-- `target_add_binary_data(${COMPONENT_LIB} "assets/jnr_sb_font.ttf" BINARY RENAME_TO jnr_sb_font_ttf)`
-
-把字体资源打包进最终固件，然后在运行时通过 `TinyTTF` 创建字体对象。
-
-这条链路把以下层面串起来：
-
-- `CMake` 资源打包
-- 链接后的二进制符号
-- `LVGL TinyTTF`
-- 运行时 `PSRAM` / heap 行为
-
-因此字体问题不是“纯 UI 视觉问题”，而是显示、内存和调度的交叉集成点。
-
-## Wi-Fi Hosted 集成
-
-当前仓库的联网能力依赖以下组合：
-
-- `espressif/esp_hosted`
-- `espressif/esp_wifi_remote`
+- `espressif__esp_hosted`
+- `espressif__esp_wifi_remote`
+- `espressif__wifi_remote_over_eppp`
 - 板载 `ESP32-C6`
-- `SDIO` host interface
 
-相关配置落在：
+对上层业务来说，这条集成链路体现在：
 
-- `sdkconfig.defaults`
-- `sdkconfig`
+- `network_service` 使用 `esp_wifi` / `esp_netif` 公开接口
+- 实际无线实现则由 Hosted / Remote 路线承接
+- 因此排查时不能把行为简单等同于原生 `esp_wifi` 板型
 
-当前关键集成约束：
+## 配置系统集成
 
-- `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
-- `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y`
-- `CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y`
-- `CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y`
-- `# CONFIG_ESP_HOST_WIFI_ENABLED is not set`
+当前仓库已经完成一条比较清晰的配置流：
 
-这条集成链路意味着：
+1. `Kconfig.projbuild`
+   - 提供首启动默认值
+2. `app_config_service`
+   - 组装默认值、执行校验、持久化到 `NVS`
+3. `config_web_service`
+   - 通过网页和 REST 接口暴露配置读写
+4. `network_service` / `provider_service` / `ui_service`
+   - 统一从 `app_config_service` 读取运行态配置
 
-- 看到联网异常时，先检查 Hosted / Remote 路线是否跑偏
-- 不要默认把问题归因到本地 `esp_wifi` 业务代码
+这条链路把“构建期默认值”和“运行期配置”做了明显分层。
 
-## 项目内 override 集成
+## 本地网页集成
 
-当前 `main/idf_component.yml` 把多个第三方依赖指向仓库内 override：
+当前配置网页与系统内部服务的集成点如下：
 
-- `../components/espressif__esp_codec_dev`
-- `../components/waveshare__esp_lcd_st7703`
-- `../components/waveshare__esp32_p4_wifi6_touch_lcd_4b`
+- `GET /api/config`
+  - 读取 `app_config_service` 的当前配置
+- `POST /api/config`
+  - 走统一校验并保存配置
+- `GET /api/status`
+  - 聚合网络与 provider 快照
+- `POST /api/portal/complete`
+  - 推进 `network_service` 的门户完成状态
+- `POST /api/restart`
+  - 触发系统重启
 
-与之对应，`dependencies.lock` 已把这些依赖解析成：
+页面本身是内嵌 HTML，不依赖外置静态资源服务。
 
-- `type: local`
-- `path: components\\...`
+## UI 与服务集成
 
-这层集成的风险和价值都很高：
+当前板上主屏与后端服务的集成模式很直接：
 
-- 价值：能在 `ESP-IDF v6.0.1` 下及时修兼容问题
-- 风险：需要持续跟踪上游组件形状，避免仓库内长期漂移
+- UI 不自己维护网络状态机
+- UI 不自己维护 provider 抓取逻辑
+- UI 只消费：
+  - `network_service_snapshot_t`
+  - `provider_service_snapshot_t`
 
-## 配置与业务参数集成
+这使得页面层可以专注于：
 
-业务配置通过 `components/network_service/Kconfig.projbuild` 暴露给 `menuconfig`：
+- 可读性
+- 状态折叠
+- 渲染性能
 
-- `AI_MONITOR_WIFI_SSID`
-- `AI_MONITOR_WIFI_PASSWORD`
-- `AI_MONITOR_WIFI_HOSTNAME`
-- `AI_MONITOR_UI_REFRESH_MS`
+而不把驱动 / HTTP / 持久化混进 `LVGL` 层。
 
-运行时消费关系是：
+## Provider 外部接口集成
 
-- `network_service` 读取 `SSID` / 密码 / 主机名
-- `ui_service` 读取 `CONFIG_AI_MONITOR_UI_REFRESH_MS` 驱动刷新频率
+当前 `provider_service` 已经和外部监控接口做了首版集成：
 
-这使得当前仓库已经有一条完整的：
+- 通过 `base_url + endpoint_path` 组合目标地址
+- 使用 bearer token / access token
+- 使用 provider 特定的用户头
+- 当前默认端点为 `/api/subscription/self`
 
-- `Kconfig` -> `sdkconfig` -> 组件运行时
+虽然目前只实现 `AQI` provider，但边界已经通用化，后续可在不推倒 `app_config_service` 的前提下扩展其他 provider。
 
-集成链路。
+## 组件间关键耦合
 
-## ESP-IDF 工具链集成
+当前最值得记录的内部集成关系有两类。
 
-仓库 `AGENTS.md` 已明确要求工程动作优先走 `ESP-IDF MCP`。当前会话验证结果是：
+第一类是健康的扇出：
 
-- `project://config` 可读
-- `project://devices` 已注册为资源
-- `project://status` 本次读取超时
+- `app_config_service` 被多个组件共同依赖
+- `network_service` 与 `provider_service` 为 UI 和网页共享快照
 
-因此当前最准确的工具集成结论是：
+第二类是潜在风险：
 
-- MCP 已挂载并部分可用
-- 重资源读取可能受工具超时窗口影响
-- 不能因为一次超时就把 MCP 判死
-- 也不能省略 CLI 回退路径
+- `network_service` 的 `REQUIRES` 中包含 `provider_service`
+- `provider_service` 的 `REQUIRES` 中包含 `network_service`
 
-当前稳定 CLI 路线仍然是：
-
-- 激活 `ESP-IDF` 环境
-- 再执行 `idf.py`
-
-## 外部系统集成现状
-
-当前真正落地的外部集成还比较少：
-
-- `Waveshare BSP`
-- `ESP-IDF` 组件注册表
-- `ESP-IDF MCP`
-- GitHub 远程仓库
-
-这些能力还没有真正接入：
-
-- 后端 `HTTP polling`
-- `WebSocket`
-- `MQTT`
-- 监控告警服务
-- 云端 Agent 状态接口
-
-所以仓库目前更像：
-
-- 已把板级显示和网络诊断链路打通
-- 还没把业务后端链路接上
+这代表当前存在双向组件依赖。即使当前能构建，也应在后续演进中优先考虑如何解耦。

@@ -2,114 +2,81 @@
 
 ## 当前测试现实
 
-这个仓库目前没有完整的自动化质量护栏：
+当前仓库还没有：
 
-- 没有单元测试
-- 没有组件测试
-- 没有 CI
-- 没有后端协议测试夹具
+- 单元测试
+- 组件测试
+- CI
+- 自动化板级回归
 
-因此当前验证仍以：
+因此当前验证方式以工程构建和上板验证为主。
 
-- 配置核对
-- 工程构建
-- 上板回归
+## 最小验证流程
 
-为主。
+### 工程级
 
-## 最小验证顺序
-
-对当前项目，推荐的验证顺序是：
-
-1. 确认 target / 配置 / 依赖组合
-2. `reconfigure`
-3. `build`
-4. 如涉及显示或联网关键路径，再 `flash monitor`
-
-仓库 `AGENTS.md` 约定工程动作优先 MCP；如果 MCP 不支持或超时，再回退 CLI。
-
-## 当前最重要的回归点
-
-### 显示 / UI
-
-至少确认：
-
-- 屏幕点亮
-- 背光正常
-- 页面创建成功
-- 首帧不因 `TinyTTF` / `PSRAM` / allocator 组合触发复位
-- 页面定时刷新稳定
-
-### 网络
-
-至少确认：
-
-- `Wi-Fi` 状态能进入连接流程
-- `SSID` / `IP` / `DNS` / `RSSI` / 信道字段可刷新
-- 没有明显走回本地 `esp_wifi` 路线
-
-### 依赖与配置
-
-改了以下内容后，必须重新验证：
-
-- `main/idf_component.yml`
-- 本地 override 组件
-- `dependencies.lock`
-- `sdkconfig.defaults`
-- 分区表
-
-## 常用命令
-
-Windows / PowerShell：
+在仓库根目录执行：
 
 ```powershell
-idf.py -C "E:\esp32_ai_monitor" reconfigure
+idf.py reconfigure
 ```
 
 ```powershell
-idf.py -C "E:\esp32_ai_monitor" build
+idf.py build
 ```
+
+### 板级
+
+涉及显示、网络、配置网页或 provider 逻辑时，继续执行：
 
 ```powershell
-idf.py -C "E:\esp32_ai_monitor" -p COM7 flash monitor
+idf.py -p <PORT> flash monitor
 ```
 
-## UI 路径专项关注
+## 按模块的手工验证点
 
-当前 `ui_service` 已经加入：
+### `app_config_service`
 
-- `TinyTTF`
-- `PSRAM` 绘图缓冲
-- heap 快照日志
-- 只在文本变化时更新 label
+- 默认值是否正确装配
+- 运行时保存是否成功
+- 非法输入是否被校验拦截
 
-因此 UI 回归要重点看：
+### `network_service`
 
-- `Heap[before-fonts]`
-- `Heap[after-fonts]`
-- `Heap[first-refresh]`
-- watchdog 或 `SW_CPU_RESET`
+- `STA` / `SoftAP` 路径是否正确
+- 企业认证参数是否生效
+- 门户状态是否能正确推进
+- UI 与配置网页读取到的网络快照是否一致
 
-## Hosted Wi-Fi 路径专项关注
+### `provider_service`
 
-当前项目联网链路必须保持：
+- 无凭据时是否进入合理状态
+- 抓取成功 / 失败统计是否更新
+- HTTP 错误能否反映到状态文本
+- delta 与最近成功时间是否合理
 
-- `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
-- `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y`
-- `# CONFIG_ESP_HOST_WIFI_ENABLED is not set`
+### `config_web_service`
 
-如果日志出现这些异常，先查 Hosted / Remote 路线：
+- `/api/config` 读取与保存是否正常
+- `/api/status` 是否返回最新运行态
+- `/api/portal/complete` 是否能推进门户状态
+- `/api/restart` 是否行为明确
 
-- `OS adapter function version error`
-- `Failed to unregister Rx callbacks`
-- `esp_wifi_init failed`
-- `net80211` 风格错误
+### `ui_service`
 
-## 文档验证
+- 首帧是否稳定
+- 字体加载是否成功
+- 网络 / provider 状态是否可见
+- 文本变化刷新是否正常
 
-文档刷新后，至少应检查：
+## 高风险改动
 
-- 路径是否真实存在
-- `sdkconfig.defaults` 关键值是否匹配
-- 组件依赖与 override 描述是否匹配 `main/idf_component.yml` / `dependencies.lock`
-- 不继续保留已经失效的“环境不可用”之类旧结论
+以下改动即使编译通过，也不应视为低风险：
+
+- `sdkconfig.defaults` 变化
+- Hosted / Remote 相关配置变化
+- `PSRAM`、字体、allocator、显示缓冲变化
+- 配置网页字段或接口变化
+- provider 数据模型变化
+
+这些改动都应至少做一次上板回归。

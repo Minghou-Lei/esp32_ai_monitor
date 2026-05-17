@@ -1,153 +1,124 @@
 # DEVELOPMENT
 
-## 当前开发阶段
+## 开发原则
 
-当前仓库处于：
+当前项目的开发原则是：
 
-- 板级 bring-up 已落地
-- Wi-Fi 状态页已落地
-- 监控终端主业务尚未开始
+- 主入口保持轻量
+- 业务能力优先拆到 `components/`
+- 构建期默认值和运行期配置分层
+- UI 以状态可读性和稳定性优先
+- 工程动作优先使用 `ESP-IDF MCP`
 
-所以当前开发原则应是：
+## 何时修改哪个组件
 
-- 先保证现有板级链路稳定
-- 再进入监控协议和控制台能力
+### `app_config_service`
 
-## 模块开发原则
+在这些情况下优先改它：
 
-### 保持 `main/main.c` 很薄
+- 新增运行时可配置项
+- 需要统一校验逻辑
+- 需要把 Kconfig 默认值引入运行态
+- 需要新增 NVS 持久化字段
 
-当前入口已经符合这个方向，后续继续坚持：
+### `network_service`
 
-- 入口只做启动编排
-- 不把业务逻辑塞回 `main`
+在这些情况下优先改它：
 
-### 新能力优先拆到 `components/`
+- Wi-Fi 接入逻辑变化
+- 企业认证变化
+- 门户状态管理变化
+- 配置热点回退逻辑变化
+- 网络快照字段变化
 
-当前已有正向示例：
+### `provider_service`
 
-- `components/network_service`
-- `components/ui_service`
+在这些情况下优先改它：
 
-后续推荐补齐：
+- 接入新的外部 provider
+- 调整轮询周期和失败处理
+- 调整快照字段或 delta 统计
+- 扩展状态可视化数据
 
-- `backend_client`
-- `agent_state`
-- `settings_store`
-- `touch_service`
-- 必要时再抽 `display_service`
+### `config_web_service`
 
-## UI 开发原则
+在这些情况下优先改它：
 
-当前 UI 统一使用 `LVGL`，并依赖官方 `BSP`。
+- 新增或修改配置页字段
+- 新增本地 REST 接口
+- 调整页面交互或保存流程
+- 增加维护动作入口
 
-后续页面开发建议：
+### `ui_service`
 
-- 继续复用 `ui_service` 的状态驱动方式
-- 优先保证可读性和错误态
-- 先做页面状态管理，再做视觉层扩展
+在这些情况下优先改它：
 
-当前已证明有价值的做法包括：
+- 主屏布局变化
+- 字体与视觉层级变化
+- 刷新节奏变化
+- 新状态字段展示
 
-- 周期性定时刷新
-- 只在文本变化时更新 label
-- 使用嵌入式字体资源
-- 记录首帧关键 heap 快照
+## UI 开发约束
 
-当前新增的重要运行时约束：
+当前 UI 已经依赖：
 
-- `TinyTTF` 的首帧渲染压力必须和 `LVGL` allocator 策略一起看
-- 不要默认 `LVGL` builtin 小池足够承载首帧字形缓存
-- 如果继续使用 `TinyTTF`，优先保住 `CLIB malloc` 路线
-
-## 网络开发原则
-
-当前网络层主要是 `Wi-Fi Station` 详情采集，尚未进入业务协议。
-
-后续协议开发建议顺序：
-
-1. `HTTP polling`
-2. 明确后端 `JSON` 模型
-3. 再考虑 `WebSocket`
-4. 只有后端已采用时再评估 `MQTT`
-
-## Hosted 路线原则
-
-当前项目必须按这个硬件结构理解：
-
-- `ESP32-P4`
-  - 主控、显示、触摸、业务
-- `ESP32-C6`
-  - `Wi-Fi 6 / BLE`
-
-因此后续开发时：
-
-- 不要把无线问题默认当成本地 `esp_wifi` 问题
-- 优先从 Hosted / Remote 路线排查
-- 改配置前先确认是否影响 `esp_hosted` / `esp_wifi_remote`
-
-## 依赖管理原则
-
-当前依赖以 `ESP-IDF` 组件管理器为主，同时有项目内 override 层。
-
-应继续坚持：
-
-- 依赖优先写进 `main/idf_component.yml`
-- 变更后检查 `dependencies.lock`
-- 只有确实需要 SDK 兼容补丁时才改 override 组件
-- override 的目标是跟随官方，而不是长期自建分叉
-
-## 配置变更原则
-
-凡是涉及以下内容，都应同步看 `sdkconfig.defaults`：
-
-- target
-- flash size
-- 分区表
 - `PSRAM`
-- Hosted Wi-Fi
-- 显示参数
-- `LWIP` 缓冲区
-- `LVGL` allocator
+- `TinyTTF`
+- `LVGL`
+- 多块大字号文本
 
-当前仓库已经踩过的约束包括：
+所以开发时要特别注意：
 
-- 不要打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
-- Hosted 路线对内存和配置组合敏感
-- UI 首帧和字体加载受 `PSRAM` 影响
-- `LVGL` allocator 选择会直接影响 `TinyTTF` 是否触发首帧断言复位
+- 只在文本变化时更新 label
+- 不要默认小内存池足够
+- 改字体、绘图缓冲或 allocator 时重新评估首帧内存峰值
+- “只是改个显示文案”也可能带来刷新或布局成本变化
 
-## 工程动作原则
+## 网络开发约束
 
-仓库 `AGENTS.md` 要求 `ESP-IDF` 工程动作优先 MCP，当前开发也应延续：
+当前无线链路不是普通本地 Wi-Fi 直驱，而是 Hosted / Remote 路线。因此：
 
-- 先检查 `project://config`
-- 再尝试 `project://status`
-- 构建 / 烧录动作优先 MCP
-- MCP 超时或不支持时再明确回退 `idf.py`
+- 不打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
+- 不按原生板型的思路推断所有网络问题
+- 遇到接入异常时先检查 Hosted / Remote 配置组合
 
-## 文档同步原则
+## 配置开发约束
 
-以下情况发生时应同步文档：
+当前项目已经从“编译期配置”转向“编译期默认值 + 运行时覆盖”的模式。新增配置项时优先遵守这条流程：
 
-- 模块边界变化
-- 依赖与 override 策略变化
-- 分区与内存策略变化
-- Hosted Wi-Fi 关键配置变化
-- 页面结构从诊断页演进为监控页
+1. 在 `Kconfig.projbuild` 增加默认值
+2. 在 `app_config_service` 中加入字段、默认值装配和校验
+3. 在 `config_web_service` 中暴露运行时入口
+4. 按需在 UI / 网络 / provider 中消费该字段
 
-本项目当前推荐同步位置：
+## 工程动作建议
 
-- `README.md`
-- `docs/*.md`
-- `.planning/codebase/*.md`
-- `.planning/research/*.md`
+按仓库约定：
 
-## 当前最值得推进的开发方向
+- 优先通过 MCP 做 `config`、`status`、`build`、`flash`
+- MCP 不可用或超时时，再明确回退 `idf.py`
+- 回退时写清原因，不做静默切换
 
-在当前代码基础上，最自然的下一步不是继续堆更多 Wi-Fi 字段，而是：
+手动操作时，在仓库根目录执行：
 
-1. 保持当前 UI 和配置组合稳定
-2. 引入最小 `backend_client`
-3. 建立“后端在线 / 离线 / 延迟 / 最近错误”的状态模型
-4. 把当前页面从“Wi-Fi 详情页”演进为“监控总览页”
+```powershell
+idf.py reconfigure
+```
+
+```powershell
+idf.py build
+```
+
+```powershell
+idf.py -p <PORT> flash monitor
+```
+
+## 文档与敏感信息
+
+当前文档必须持续贴近工作树事实，但不应包含：
+
+- 本机绝对路径
+- 固定串口号
+- Wi-Fi / 门户 / provider 实际凭据
+
+如果文档需要示例值，使用占位符而不是机器态数据。

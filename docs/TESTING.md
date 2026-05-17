@@ -15,7 +15,20 @@
 
 ### 工程级
 
-在仓库根目录执行：
+优先路径是通过 `ESP-IDF MCP` 做工程动作和状态确认：
+
+- 先读 `project://config`
+- 再读 `project://status`
+- 如需上板，再读 `project://devices`
+- 调用 `build_project` 或 `flash_project` 后，再次读取 `project://status`
+
+注意：
+
+- 当前 `build_project` / `flash_project` 可以采用后台任务模式
+- 工具先返回“已启动”并不代表失败
+- 验证闭环要看 `project://status` 里的 `operation.status`、`exit_code` 和 `log_tail`
+
+如果无法使用 MCP，再回退到命令行。在仓库根目录执行：
 
 ```powershell
 idf.py reconfigure
@@ -80,3 +93,15 @@ idf.py -p <PORT> flash monitor
 - provider 数据模型变化
 
 这些改动都应至少做一次上板回归。
+
+## MCP 回归要点
+
+每次动到工程动作链、用户级 MCP 启动脚本或全局 `Codex` 集成时，至少验证：
+
+- `project://config` 可读
+- `project://status` 能在秒级返回，而不是卡死到工具超时
+- `project://devices` 能返回当前可见串口
+- `build_project` 返回后，`project://status` 能看到 `operation` 状态推进
+- `operation.status` 最终会收敛到 `succeeded` 或 `failed`，而不是一直悬挂
+
+如果看到 `Transport closed`，先把它归类为 MCP 会话失效，再决定是否要重连或重开会话；不要先把锅甩给固件代码。

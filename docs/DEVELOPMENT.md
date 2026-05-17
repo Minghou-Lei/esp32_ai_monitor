@@ -99,6 +99,22 @@
 - MCP 不可用或超时时，再明确回退 `idf.py`
 - 回退时写清原因，不做静默切换
 
+当前还要额外注意一条运行时语义：
+
+- `project://status` 应被当成快速状态快照，而不是重型工程动作
+- `build_project` / `flash_project` 可能采用后台执行模式，工具调用先返回“已启动”，最终结果要通过再次读取 `project://status` 确认
+- 因此不能再把“工具调用超过 `120s` 才算真正执行”当成前提
+
+推荐检查顺序：
+
+1. 读 `project://config`
+2. 读 `project://status`
+3. 如需烧录，再读 `project://devices`
+4. 调 `build_project` 或 `flash_project`
+5. 再读一次 `project://status`，确认 `operation` 的状态、退出码和日志尾部
+
+如果当前会话报 `Transport closed`，优先重连当前 MCP 会话；这说明 transport 已失效，不是仓库代码出了新问题。
+
 手动操作时，在仓库根目录执行：
 
 ```powershell
@@ -120,5 +136,7 @@ idf.py -p <PORT> flash monitor
 - 本机绝对路径
 - 固定串口号
 - Wi-Fi / 门户 / provider 实际凭据
+- 当前 Windows 用户名或用户目录结构
+- 只对当前机器成立的 `CODEX_HOME` / Python venv 完整路径
 
 如果文档需要示例值，使用占位符而不是机器态数据。

@@ -399,7 +399,7 @@
 
 优先级必须是：
 
-1. 优先使用 `idf.py mcp-server` 暴露的 MCP 能力。
+1. 优先使用用户级 `esp-idf` MCP 启动链暴露的 MCP 能力。
 2. 不要一上来直接跑裸 `idf.py`。
 3. 只有在 MCP 不可用、未挂载、启动失败、超时不足以完成或当前环境不支持时，才回退到普通命令行方式。
 4. 回退时必须明确写出原因，不允许静默切回 CLI。
@@ -445,21 +445,17 @@
 
 当前仓库默认依赖“用户级 Codex 全局 MCP 配置”，不是项目级 MCP 配置。
 
-当前全局 `esp-idf` MCP server 已注册在：
+当前全局 `esp-idf` MCP server 依赖用户级 Codex 配置注册。
 
-- `C:\Users\admin\.codex\config.toml`
+当前全局 `esp-idf` MCP 启动链由用户级 `Codex` 脚本目录中的 `start-esp-idf-mcp.ps1` 入口负责拉起。
 
-当前全局 `esp-idf` MCP 启动脚本位于：
+当前启动方式本质上是：
 
-- `C:\Users\admin\.codex\scripts\start-esp-idf-mcp.ps1`
-
-当前启动方式是：
-
-- `pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\Users\admin\.codex\scripts\start-esp-idf-mcp.ps1`
+- `pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <CODEX_HOME>/scripts/start-esp-idf-mcp.ps1`
 
 ### 9.6 当前启动脚本的职责
 
-[start-esp-idf-mcp.ps1](C:/Users/admin/.codex/scripts/start-esp-idf-mcp.ps1) 当前负责：
+用户级 `start-esp-idf-mcp.ps1` 当前负责：
 
 - 设定 PowerShell 严格错误策略
 - 统一 `UTF-8` I/O 编码
@@ -467,13 +463,10 @@
   - `IDF_PATH`
   - `PYTHONUTF8`
   - `PYTHONIOENCODING`
-- 显式调用：
-  - `C:\Users\admin\.espressif\python_env\idf6.0_py3.14_env\Scripts\python.exe`
-  - `C:\esp\v6.0.1\esp-idf\tools\activate.py --export`
+- 激活当前机器上的 `ESP-IDF` Python 环境
 - dot-source 激活脚本
 - 吞掉激活脚本写到 `stdout` 的提示输出，避免破坏 MCP `stdio` 协议
-- 最终执行：
-  - `idf.py -C E:\esp32_ai_monitor mcp-server`
+- 最终启动用户级 `ESP-IDF MCP` 代理，而不是把工程动作直接阻塞在原生 `idf.py mcp-server` 上
 
 ### 9.7 当前已验证的 MCP 事实
 
@@ -488,20 +481,21 @@
   - `idf_version = v6.0.1`
   - `target = esp32p4`
 - 当前会话已能通过 MCP 识别串口：
-  - `COM1`
-  - `COM7`
+  - 至少存在一个调试串口
+  - 串口枚举结果应通过 `project://devices` 动态确认
 
 ### 9.8 MCP 使用注意事项
 
 当前 `ESP-IDF MCP` 真实使用中需要注意：
 
-- 资源读取可用，不等于所有长耗时工具调用都能在当前默认超时窗口内完成。
-- `build_project` 可能因为工具层 `120s` 超时而失败，即使底层编译其实能完成。
-- 出现这种情况时，应把它判断为“工具超时限制”还是“构建失败”，不要直接下结论说 MCP 不可用。
-- 如果 `build_project` 超时，应补做：
-  - 读取 `project://status`
-  - 检查 `build` 目录最新产物
-  - 必要时用 CLI 复核 `idf.py build` 尾部输出
+- 不能把“资源目录能列出来”当成“所有资源都可用”。
+- 当前曾出现原生 `project://status` 读取卡死、随后把 `build_project` / `flash_project` 一并拖到 `120s` 工具超时的故障。
+- 当前用户级代理的约定是：
+  - `project://status` 必须走快速本地快照路径
+  - `build_project` / `flash_project` / `clean_project` / `set_target` 应以后台任务方式立即返回
+  - 长耗时工程动作的最终结果通过再次读取 `project://status` 获取
+- 因此看到 `build_project` 很快返回时，不要误判为“没有执行”；先去读 `project://status` 中的 `operation` 状态。
+- 如果 MCP 工具或资源返回 `Transport closed`，优先判断为当前会话持有的是失效 transport，应先重连会话或重载 MCP，而不是直接修改仓库代码。
 
 ### 9.9 当前已知 CLI 稳定进入方式
 
@@ -513,6 +507,22 @@
 
 比起直接依赖 `export.ps1`，这种路径更稳。
 
+### 9.10 文档脱敏要求
+
+文档里可以保留这些事实层级：
+
+- 存在用户级 `Codex` 全局 MCP 配置
+- 启动入口位于用户级 `scripts/` 目录
+- 通过 `PowerShell + activate.py --export + MCP 代理` 拉起
+
+但不要在仓库文档中继续固化这些本机敏感细节：
+
+- 当前 Windows 用户名
+- 用户目录绝对路径
+- 本机 Python venv 的完整绝对路径
+- 本机 `CODEX_HOME` 的完整绝对路径
+- 任何只对当前机器成立的私有目录层级
+
 ## 10. 当前本地环境现实约束
 
 虽然工作区已记录 `ESP-IDF v6.0.1` 根路径，但是否能直接使用仍取决于当前会话是否真的接入了本机环境。
@@ -521,7 +531,7 @@
 
 - 当前工作区的 [settings.json](E:/esp32_ai_monitor/.vscode/settings.json) 指向 `C:\esp\v6.0.1\esp-idf`
 - 当前本机 `ESP-IDF` Python venv 已存在：
-  - `C:\Users\admin\.espressif\python_env\idf6.0_py3.14_env\Scripts\python.exe`
+  - 用户目录下的 `espressif/python_env/.../python.exe`
 - 当前本机已补齐 `ESP-IDF` 的 MCP Python 依赖：
   - `C:\esp\v6.0.1\esp-idf\tools\requirements\requirements.mcp.txt`
 - 当前 `idf.py --version` 可返回 `ESP-IDF v6.0.1`
@@ -546,7 +556,7 @@ idf.py -C "E:\esp32_ai_monitor" build
 ```
 
 ```powershell
-idf.py -C "E:\esp32_ai_monitor" -p COM7 flash monitor
+idf.py -C "E:\esp32_ai_monitor" -p <PORT> flash monitor
 ```
 
 如需核对或声明板级依赖，再使用：
@@ -565,7 +575,7 @@ idf.py -C "E:\esp32_ai_monitor" add-dependency "waveshare/esp32_p4_wifi6_touch_l
 - 不要默认当前 `PowerShell` 已经能直接识别 `idf.py`
 - 优先从 [settings.json](E:/esp32_ai_monitor/.vscode/settings.json) 的 `idf.currentSetup` 读取 `ESP-IDF` 根路径
 - 当前已知路径是 `C:\esp\v6.0.1\esp-idf`
-- 当前 Codex 全局 `ESP-IDF MCP` 启动入口是 [start-esp-idf-mcp.ps1](C:/Users/admin/.codex/scripts/start-esp-idf-mcp.ps1)
+- 当前 Codex 全局 `ESP-IDF MCP` 启动入口位于用户级 `scripts/start-esp-idf-mcp.ps1`
 
 但请注意：
 

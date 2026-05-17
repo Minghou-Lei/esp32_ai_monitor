@@ -1,50 +1,60 @@
+<!-- generated-by: gsd-doc-writer -->
 # TESTING
 
-## 当前测试现实
+## 当前验证现实
 
-当前仓库还没有：
+当前仓库没有这些自动化护栏：
 
 - 单元测试
+- 集成测试
 - 组件测试
 - CI
-- 自动化板级回归
+- `.github/workflows/`
 
-因此当前验证方式以工程构建和上板验证为主。
+因此当前验证模式不是“跑测试套件”，而是：
 
-## 最小验证流程
+1. 刷新生成态
+2. 构建固件
+3. 如涉及显示、网络、provider 或配置网页，必须上板验证
 
-### 工程级
+## 基本验证命令
 
-优先路径是通过 `ESP-IDF MCP` 做工程动作和状态确认：
-
-- 先读 `project://config`
-- 再读 `project://status`
-- 如需上板，再读 `project://devices`
-- 调用 `build_project` 或 `flash_project` 后，再次读取 `project://status`
-
-注意：
-
-- 当前 `build_project` / `flash_project` 可以采用后台任务模式
-- 工具先返回“已启动”并不代表失败
-- 验证闭环要看 `project://status` 里的 `operation.status`、`exit_code` 和 `log_tail`
-
-如果无法使用 MCP，再回退到命令行。在仓库根目录执行：
+### 刷新配置与依赖
 
 ```powershell
 idf.py reconfigure
 ```
 
+### 构建
+
 ```powershell
 idf.py build
 ```
 
-### 板级
-
-涉及显示、网络、配置网页或 provider 逻辑时，继续执行：
+### 上板回归
 
 ```powershell
 idf.py -p <PORT> flash monitor
 ```
+
+## MCP 路径验证
+
+如果当前会话接入了 `ESP-IDF MCP`，最小验证顺序是：
+
+1. 读 `project://config`
+2. 读 `project://status`
+3. 如需烧录，再读 `project://devices`
+4. 触发 `build` 或 `flash`
+5. 再读一次 `project://status`
+
+要确认的重点是：
+
+- `target`
+- `idf_version`
+- `build_dir`
+- `operation.status`
+- `exit_code`
+- `log_tail`
 
 ## 按模块的手工验证点
 
@@ -53,10 +63,11 @@ idf.py -p <PORT> flash monitor
 - 默认值是否正确装配
 - 运行时保存是否成功
 - 非法输入是否被校验拦截
+- 重置默认值后是否恢复到编译期基线
 
 ### `network_service`
 
-- `STA` / `SoftAP` 路径是否正确
+- `STA` / fallback `SoftAP` 路径是否正确
 - 企业认证参数是否生效
 - 门户状态是否能正确推进
 - UI 与配置网页读取到的网络快照是否一致
@@ -65,26 +76,27 @@ idf.py -p <PORT> flash monitor
 
 - 无凭据时是否进入合理状态
 - 抓取成功 / 失败统计是否更新
-- HTTP 错误能否反映到状态文本
-- delta 与最近成功时间是否合理
+- HTTP 错误能否反映到 `state_text` / `status_text`
+- delta 与小时消费统计是否合理
 
 ### `config_web_service`
 
-- `/api/config` 读取与保存是否正常
-- `/api/status` 是否返回最新运行态
-- `/api/portal/complete` 是否能推进门户状态
-- `/api/restart` 是否行为明确
+- `GET /api/config` 读取是否正确
+- `POST /api/config` 校验和保存是否正确
+- `GET /api/status` 是否返回最新运行态
+- `POST /api/portal/complete` 是否能推进门户状态
+- `POST /api/restart` 是否会按预期延迟重启设备
 
 ### `ui_service`
 
 - 首帧是否稳定
 - 字体加载是否成功
 - 网络 / provider 状态是否可见
-- 文本变化刷新是否正常
+- 刷新节奏下是否出现抖动或卡顿
 
-## 高风险改动
+## 高风险改动的最低验证要求
 
-以下改动即使编译通过，也不应视为低风险：
+以下改动即使编译通过，也不应视为验证完成：
 
 - `sdkconfig.defaults` 变化
 - Hosted / Remote 相关配置变化
@@ -92,16 +104,19 @@ idf.py -p <PORT> flash monitor
 - 配置网页字段或接口变化
 - provider 数据模型变化
 
-这些改动都应至少做一次上板回归。
+这些改动都至少要做一次上板回归。
 
-## MCP 回归要点
+## 当前缺口
 
-每次动到工程动作链、用户级 MCP 启动脚本或全局 `Codex` 集成时，至少验证：
+由于没有自动化测试，当前最大的验证风险是：
 
-- `project://config` 可读
-- `project://status` 能在秒级返回，而不是卡死到工具超时
-- `project://devices` 能返回当前可见串口
-- `build_project` 返回后，`project://status` 能看到 `operation` 状态推进
-- `operation.status` 最终会收敛到 `succeeded` 或 `failed`，而不是一直悬挂
+- 配置模型变化可能静默破坏保存/恢复逻辑
+- provider 返回格式变化可能静默破坏解析
+- UI、网络、配置网页三套观察面可能发生漂移
+- 文档可能看起来正确，但固件行为并不正确
 
-如果看到 `Transport closed`，先把它归类为 MCP 会话失效，再决定是否要重连或重开会话；不要先把锅甩给固件代码。
+因此每次声称“完成”前，都要明确说明：
+
+- 做了哪些验证
+- 哪些没有验证
+- 下一步最小验证是什么

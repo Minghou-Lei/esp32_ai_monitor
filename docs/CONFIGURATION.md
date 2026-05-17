@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # CONFIGURATION
 
 ## 配置分层
@@ -35,15 +36,21 @@
 
 ## 运行时配置模型
 
-当前统一配置结构由 `app_config_service` 维护，至少包含这些域：
+当前统一配置结构由 `components/app_config_service/include/app_config_service.h` 维护，至少包含这些域：
 
 ### Wi-Fi
 
-- 基本接入参数
-- 主机名
-- 安全模式
-- 企业认证参数
-- 门户相关元数据
+- `ssid`
+- `password`
+- `hostname`
+- `security`
+- `eap_identity`
+- `eap_username`
+- `eap_password`
+- `portal_enabled`
+- `portal_url`
+- `portal_username`
+- `portal_password`
 
 ### 配置热点
 
@@ -57,7 +64,10 @@
 - `display_name`
 - `base_url`
 - `endpoint_path`
-- 鉴权与身份相关参数
+- `access_token`
+- `management_key`
+- `user_header_name`
+- `user_header_value`
 - `refresh_interval_ms`
 
 ### UI
@@ -75,7 +85,38 @@
 - provider 名称、端点和凭据字段
 - UI 刷新周期
 
-这些默认值用于首次启动或 `NVS` 尚未写入覆盖值时的配置装配。
+这些默认值用于首次启动或 NVS 中还没有有效覆盖值时的配置装配。
+
+## 本地配置 API 暴露的配置字段
+
+`GET /api/config` 当前返回这些配置字段：
+
+| Field | Description |
+|-------|-------------|
+| `wifi_ssid` | Wi-Fi SSID |
+| `wifi_password` | Wi-Fi 密码 |
+| `wifi_hostname` | 设备主机名 |
+| `wifi_security` | `open` / `wpa2-psk` / `wpa2-enterprise` |
+| `wifi_eap_identity` | Enterprise identity |
+| `wifi_eap_username` | Enterprise username |
+| `wifi_eap_password` | Enterprise password |
+| `wifi_portal_enabled` | 是否需要门户 / OA 注册 |
+| `wifi_portal_url` | 门户 URL |
+| `wifi_portal_username` | 门户用户名 |
+| `wifi_portal_password` | 门户密码 |
+| `config_ap_enabled` | 是否启用 fallback 配置热点 |
+| `config_ap_ssid` | 配置热点 SSID |
+| `config_ap_password` | 配置热点密码 |
+| `provider_kind` | 当前 provider 类型 |
+| `provider_display_name` | provider 展示名 |
+| `provider_base_url` | provider 基础 URL |
+| `provider_endpoint_path` | provider 路径 |
+| `provider_access_token` | provider access token |
+| `provider_management_key` | provider management key |
+| `provider_user_header_name` | 自定义用户头名 |
+| `provider_user_header_value` | 自定义用户头值 |
+| `provider_refresh_interval_ms` | provider 刷新周期 |
+| `ui_refresh_interval_ms` | UI 刷新周期 |
 
 ## 运行时修改入口
 
@@ -88,14 +129,29 @@
 
 这比直接改 `sdkconfig` 更符合当前产品形态。
 
+## 必填与可选项
+
+当前仓库没有单独的环境变量文件，运行时可用性主要取决于配置组合是否完整：
+
+- Wi-Fi 连接至少需要能形成有效接入组合
+- `WPA2-Enterprise` 路径需要对应的 EAP 字段
+- provider 轮询至少依赖：
+  - `provider_kind`
+  - `provider_base_url`
+  - `provider_access_token`
+  - `provider_user_header_value`
+
+如果配置不满足约束，保存阶段会由 `app_config_validate()` 拦截。
+
 ## 敏感信息处理
 
-当前配置模型里已经包含多类敏感字段：
+当前配置模型已经包含多类敏感字段：
 
 - Wi-Fi 密码
 - EAP 用户名 / 密码
 - 门户用户名 / 密码
 - provider token
+- provider management key
 - provider 用户头值
 
 因此必须坚持：
@@ -103,7 +159,7 @@
 - 不在文档里写实际值
 - 不把本机敏感项复制进 `sdkconfig.defaults`
 - 审查 `sdkconfig`、日志和网页返回值时优先检查是否泄露
-- 不在仓库文档中固化当前用户目录、`CODEX_HOME`、本机 Python venv 或固定串口号
+- 不在仓库文档中固化当前用户目录、agent 主目录、本机 Python 虚拟环境路径或固定串口号
 
 ## 配置变更后的推荐动作
 

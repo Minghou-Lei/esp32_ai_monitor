@@ -1,100 +1,120 @@
+# Codebase Concerns
+
+**Analysis Date:** 2026-05-17
+
+## Tech Debt
+
+**UI naming drift:**
+- Issue: the public UI API still uses `wifi_info_screen_*` naming while the implementation has become an AQI-style dashboard
+- Files: `components/ui_service/include/wifi_info_screen.h`, `components/ui_service/monitor_dashboard_screen.c`, `main/main.c`
+- Impact: new contributors can misread what screen is actually booted and may wire future pages into the wrong abstraction
+- Fix approach: perform a coordinated API rename only when all call sites, docs, and any future additional screens can move together
+
+**Single-file embedded config portal:**
+- Issue: HTML, CSS, JS, request parsing, validation flow, and route binding all live in `components/config_web_service/config_web_service.c`
+- Files: `components/config_web_service/config_web_service.c`
+- Impact: every portal change increases merge risk and review burden inside one large source file
+- Fix approach: split rendering helpers, payload serializers, and route handlers into smaller compilation units when the portal grows further
+
+## Known Bugs
+
+**Potential component-dependency knot:**
+- Symptoms: `network_service` and `provider_service` are mutually required at the ESP-IDF component level
+- Files: `components/network_service/CMakeLists.txt`, `components/provider_service/CMakeLists.txt`
+- Trigger: adding more shared runtime APIs or trying to extract these services independently
+- Workaround: keep shared cross-service contracts minimal until the dependency is refactored into a thinner common layer
+
+## Security Considerations
+
+**Sensitive runtime config is exposed over the local config API:**
+- Risk: the config JSON includes Wi-Fi credentials, enterprise fields, portal credentials, provider token, and management key
+- Files: `components/config_web_service/config_web_service.c`, `components/app_config_service/include/app_config_service.h`
+- Current mitigation: no secrets are committed to docs by default; runtime edits are centralized through validation
+- Recommendations: reduce readback of secret fields or mask them in the HTTP response before treating the portal as production-ready
+
+**Secrets can leak into machine-state config and logs:**
+- Risk: `sdkconfig` and runtime screenshots/log captures can accidentally preserve machine-local credentials
+- Files: `sdkconfig`, `components/app_config_service/Kconfig.projbuild`, `docs/*.md`
+- Current mitigation: committed baseline is `sdkconfig.defaults`, not `sdkconfig`
+- Recommendations: keep doc examples sanitized, avoid committing machine-effective `sdkconfig` diffs blindly, and review any generated screenshots/log excerpts before commit
+
+## Performance Bottlenecks
+
+**UI memory and refresh pressure:**
+- Problem: the dashboard combines LVGL, TinyTTF, large text widgets, and periodic updates
+- Files: `components/ui_service/monitor_dashboard_screen.c`, `sdkconfig.defaults`
+- Cause: font rendering and repeated label updates can push memory and render cost on an embedded target
+- Improvement path: keep refreshes incremental, re-evaluate font sizes/assets carefully, and validate memory behavior on hardware after UI changes
+
+**Provider fetch path is synchronous per refresh cycle:**
+- Problem: each refresh performs a blocking HTTP request and lightweight manual parsing in the poll task
+- Files: `components/provider_service/provider_service.c`
+- Cause: single-task polling is simple but serializes network latency directly into the provider update cadence
+- Improvement path: keep the cadence modest, improve failure backoff if needed, and only optimize after real-device evidence shows missed responsiveness
+
+## Fragile Areas
+
+**Hosted Wi-Fi integration path:**
+- Files: `sdkconfig.defaults`, `main/idf_component.yml`, `components/network_service/network_service.c`
+- Why fragile: the board depends on `ESP-Hosted + esp_wifi_remote` rather than a plain native Wi-Fi mental model
+- Safe modification: change hosted/remote settings deliberately and always re-run `reconfigure`, `build`, and on-device validation
+- Test coverage: no automated coverage; hardware bring-up remains the guardrail
+
+**Runtime config schema and portal coupling:**
+- Files: `components/app_config_service/include/app_config_service.h`, `components/app_config_service/app_config_service.c`, `components/config_web_service/config_web_service.c`
+- Why fragile: adding a field touches Kconfig defaults, config assembly, validation, JSON serialization, form parsing, and downstream consumers
+- Safe modification: treat config-model edits as cross-component work and verify read/save/reset behavior end to end
+- Test coverage: no automated persistence or schema migration tests
+
+## Scaling Limits
+
+**Provider item model:**
+- Current capacity: `PROVIDER_SERVICE_MAX_ITEMS` is fixed at `2`
+- Limit: larger provider payloads will not be represented fully by the current snapshot model
+- Scaling path: widen the snapshot model only after the UI and parsing contract are redesigned to consume more than the current top items
+
+**History window:**
+- Current capacity: `PROVIDER_SERVICE_HISTORY_CAPACITY` is `80`
+- Limit: long-range trend tracking is intentionally shallow
+- Scaling path: move to a more explicit history/persistence strategy instead of only increasing the static ring
+
+## Dependencies at Risk
+
+**Hosted + remote component stack:**
+- Risk: this path is more configuration-sensitive than a plain Wi-Fi example project
+- Impact: misaligned versions or config toggles can break networking even if business code is unchanged
+- Migration plan: stay aligned with verified ESP-IDF / component versions and only broaden compatibility with explicit bring-up validation
+
+## Missing Critical Features
+
+**Automated verification harness:**
+- Problem: there is no unit-test, integration-test, or CI layer to catch regressions before flashing hardware
+- Blocks: safe iteration on config schema, provider parsing, hosted Wi-Fi behavior, and UI evolution
+
+**Auth hardening for local config portal:**
+- Problem: the current local portal focuses on bring-up convenience, not operator authentication/authorization
+- Blocks: confidently exposing the portal outside tightly controlled local-network scenarios
+
+## Test Coverage Gaps
+
+**Runtime config persistence path:**
+- What's not tested: save/reset/validate behavior across all config fields
+- Files: `components/app_config_service/app_config_service.c`
+- Risk: schema growth can silently break persistence or field bounds
+- Priority: High
+
+**Provider response parsing and error mapping:**
+- What's not tested: malformed JSON, partial payloads, and alternate provider responses
+- Files: `components/provider_service/provider_service.c`
+- Risk: production payload changes can degrade status text or metrics silently
+- Priority: High
+
+**Board-local portal contract:**
+- What's not tested: HTTP route responses and form-to-config translation
+- Files: `components/config_web_service/config_web_service.c`
+- Risk: UI and config API can drift or expose invalid config writes unnoticed
+- Priority: High
+
 ---
-last_mapped_commit: f4a155a1d23a3aa8ca4e7cb568217b35c1d5a510
-mapped_at: 2026-05-17
----
 
-# CONCERNS
-
-## 1. 当前工作树处于架构过渡态
-
-当前 UI 实现已经迁移到 `monitor_dashboard_screen.c`，但公开入口仍保留 `wifi_info_screen_start()`。这会带来两个问题：
-
-- 文档和代码命名容易错位
-- 后续重构时容易误判“旧页面已完全删除”
-
-这不是致命问题，但需要显式记录。
-
-## 2. 敏感配置面显著扩大
-
-当前项目已经不只包含 Wi-Fi 密码，还包含：
-
-- EAP 凭据
-- 门户凭据
-- provider access token
-- provider 用户头值
-
-风险在于：
-
-- 文档容易误抄默认值
-- `sdkconfig` 容易携带本机私有内容
-- 配置页日志或调试输出如果处理不当，会扩大泄露面
-
-## 3. 组件间出现双向依赖
-
-当前 `CMakeLists.txt` 显示：
-
-- `network_service` 依赖 `provider_service`
-- `provider_service` 依赖 `network_service`
-
-即使当前工程能工作，这仍是一个结构性风险：
-
-- 编译边界更脆弱
-- 后续拆分难度上升
-- 容易把状态耦合继续放大
-
-## 4. Hosted Wi-Fi 路线仍然是高风险区
-
-当前无线链路仍不是普通 `esp_wifi` 场景，而是：
-
-- `P4 host + C6 slave`
-- `ESP-Hosted + esp_wifi_remote`
-
-高风险点仍包括：
-
-- Hosted 相关配置误改
-- 把问题按本地原生 Wi-Fi 思路排查
-- 组件和 SDK 版本组合漂移
-
-## 5. UI 风险已经从“点亮屏幕”升级为“内存和刷新调度”
-
-当前主屏依赖：
-
-- `PSRAM`
-- `TinyTTF`
-- `CLIB malloc`
-- 多块大字号文本
-- 周期性数据刷新
-
-主要风险不再只是布局是否正确，而是：
-
-- 首帧内存峰值
-- `LVGL` 任务长时间占用
-- 刷新和 provider / 网络状态变化叠加后的抖动
-
-## 6. 配置网页已经成为真实产品入口
-
-`config_web_service` 不再是辅助调试页，而是当前产品形态里的正式入口之一。风险在于：
-
-- 如果校验不完整，会把非法配置写进运行态
-- 如果状态输出与 UI 不一致，会导致两套观察面打架
-- 如果后续扩接口过快，会破坏“单文件、少接口、易抓包”的当前优势
-
-## 7. Provider 层仍是单实现
-
-虽然接口形状已经通用，但当前真实实现只有 `AQI` provider。风险不在于“功能不存在”，而在于文档或界面容易给人一种“provider 抽象已成熟”的错觉。
-
-更准确的说法应是：
-
-- provider 接口边界已开始通用化
-- 但真实业务能力仍是单 provider 首版实现
-
-## 8. 自动化验证仍然不足
-
-当前没有测试和 CI 兜底，所以以下变化都属于高回归成本区域：
-
-- 配置模型变化
-- Hosted 路线变化
-- 配置网页接口变化
-- UI 字体 / 内存 / 刷新逻辑变化
-
-在这种条件下，文档必须持续贴近当前工作树事实，否则很容易形成“文档看起来对，但设备行为并不对”的假象。
+*Concerns audit: 2026-05-17*

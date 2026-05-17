@@ -1,84 +1,93 @@
+<!-- generated-by: gsd-doc-writer -->
 # GETTING-STARTED
-
-## 目标硬件
-
-当前目标板卡是：
-
-- `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`
-
-建议把它理解为“带触摸屏的网络监控终端”，而不是本地重推理设备。
 
 ## 前置条件
 
-开始前至少确认：
+开始前至少需要这些条件：
 
-- 已安装 `ESP-IDF v6.0.1`
+- `ESP-IDF v6.0.1`
 - 当前 target 为 `esp32p4`
-- 本地能解析仓库依赖
-- 板卡可通过 `USB TO UART` 进行烧录和串口观察
+- 可用的 `idf.py`
+- 一块 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`
+- 可用串口连接用于烧录与串口监视
 
-## 初次构建
+如果你在 Codex 会话里工作，优先确认 `ESP-IDF MCP` 可用，并先读：
 
-在仓库根目录执行：
+- `project://config`
+- `project://status`
+
+## 安装步骤
+
+1. 克隆仓库：
+
+```bash
+git clone https://github.com/Minghou-Lei/esp32_ai_monitor.git
+cd esp32_ai_monitor
+```
+
+2. 如改动了依赖、配置基线或分区设置，先刷新构建态：
 
 ```powershell
 idf.py reconfigure
 ```
 
+3. 构建固件：
+
 ```powershell
 idf.py build
 ```
 
-如果构建成功，关键产物会出现在 `build/` 目录下。
-
-## 烧录
-
-选择正确的串口后执行：
+4. 烧录并开始串口监视：
 
 ```powershell
 idf.py -p <PORT> flash monitor
 ```
 
-其中 `<PORT>` 替换为当前机器检测到的实际串口。
+## 首次运行
 
-## 首次上板验收
+成功启动后，应该能观察到：
 
-第一次跑起来时，优先确认：
+1. 板上屏幕点亮并进入主监控界面
+2. 串口日志显示各服务启动状态
+3. 设备连上网络后，主屏或本地配置页能看到网络状态
+4. provider 配置完整时，主屏会开始展示 provider 状态与金额信息
 
-1. 屏幕点亮
-2. 背光正常
-3. 主视图能进入初始状态
-4. 首帧没有因 `TinyTTF` / allocator / `PSRAM` 路径复位
-5. 网络状态能进入连接流程
-6. 配置网页可访问
-7. provider 状态能进入 idle / fetching / ready 这类合理状态
+如果要修改运行时配置，打开设备当前可达 IP 上的本地配置页。
 
-## 配置入口
+## 常见问题
 
-当前工程支持运行时配置，不必把所有参数都写死在构建期。
+### 1. 改了 `sdkconfig.defaults` 但行为没变
 
-主要入口包括：
+先执行：
 
-- `sdkconfig.defaults`
-  - 首启动默认基线
-- 配置网页
-  - 运行时读写入口
+```powershell
+idf.py reconfigure
+```
 
-建议流程是：
+再重新 `build`。仅修改文件但不 `reconfigure`，生成态不会自动同步。
 
-- 构建期只保留通用默认值
-- 现场配网、provider 凭据和门户参数通过配置页填写
+### 2. 编译过了，但板上显示或联网不正常
 
-## 常见误区
+这类改动不能只看编译结果。当前项目没有自动化测试护栏，显示链路、Hosted Wi-Fi 路线和 provider 轮询都需要上板验证。
 
-- 不要把项目当成“P4 本地自带 Wi-Fi”的普通板卡
-- 不要打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
-- 不要把 `sdkconfig` 当成唯一可提交配置来源
-- 不要把本机敏感项直接写进 `sdkconfig.defaults`
+### 3. MCP 能列出资源，但工程动作看起来没跑
 
-## 后续阅读
+当前约定是：
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md)
-- [CONFIGURATION.md](./CONFIGURATION.md)
+- `project://status` 是快速状态快照
+- `build_project` / `flash_project` 可以后台执行并立即返回
+
+因此要以 `project://status` 中的 `operation.status`、`exit_code` 和 `log_tail` 为准，而不是只看工具调用本身是否长时间阻塞。
+
+### 4. 本地配置页能打开，但保存后不生效
+
+当前保存逻辑会先走 `app_config_validate()`，而且保存成功后仍可能需要重启设备，尤其是 Wi-Fi 和 provider 相关改动。
+
+## 下一步
+
+如果你准备继续开发，接着看：
+
 - [DEVELOPMENT.md](./DEVELOPMENT.md)
+- [CONFIGURATION.md](./CONFIGURATION.md)
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
 - [TESTING.md](./TESTING.md)

@@ -1,196 +1,147 @@
 # AI Agent Monitor Proposal
 
-## Current Project State
+## Current Codebase Reality
 
-- Repository is a minimal ESP-IDF project.
-- Build target is `esp32p4`.
-- `main/main.c` contains an empty `app_main`.
-- No `.planning/` directory exists yet.
+This repository is no longer a blank `ESP-IDF` scaffold.
 
-## GSD Route
+Current working-tree facts:
 
-Based on the current repository state, the next GSD step is:
+- The project target is `esp32p4`.
+- `main/main.c` boots a real UI component and a real Wi-Fi service component.
+- `components/network_service` already manages Wi-Fi station lifecycle and state snapshots.
+- `components/ui_service` already renders a board-local `LVGL` Wi-Fi information page using the official Waveshare `BSP`.
+- `sdkconfig.defaults` already encodes a `32MB` flash baseline, `PSRAM`, the `ESP-Hosted + esp_wifi_remote` route, and `CONFIG_LV_USE_CLIB_MALLOC=y`.
+- `main/idf_component.yml` now points several board dependencies at project-local override components.
 
-1. Run `$gsd-new-project`
-2. Then run `$gsd-plan-phase 1`
-3. Then run `$gsd-execute-phase 1`
+So the repository has moved past “empty project planning” and is now in an early bring-up implementation phase.
 
-Reason:
+## Product Positioning
 
-- `$gsd-next` routes repos without `.planning/` to `$gsd-new-project`.
-- This project is not ready for direct implementation work under the GSD workflow yet.
+The recommended product positioning still holds:
 
-## Board Facts That Matter
-
-Board: Waveshare `ESP32-P4-WIFI6-Touch-LCD-4B`
-
-- Recommended framework: ESP-IDF, version `5.3.1+`
-- Display: `4-inch`, `720x720`, touch, `MIPI-DSI`
-- Wireless: `ESP32-C6` coprocessor for `Wi-Fi 6` and `Bluetooth 5`
-- Multimedia: microphone, speaker, optional camera via `MIPI-CSI`
-- Storage and IO: `Micro SD`, `USB OTG`, `Ethernet`
-- Vendor examples exist for:
-  - LCD bring-up
-  - LVGL HMI
-  - Camera-to-LCD
-  - MP4 playback
-  - ESP-Phone style UI
-
-## Recommended Product Positioning
-
-Recommended first version:
-
-- The board is a dedicated monitoring and control terminal for an AI Agent that runs elsewhere.
+- The board is a dedicated monitoring and control terminal for an AI Agent running elsewhere.
 - The AI Agent itself should run on a PC, local server, NAS, or cloud backend.
-- The ESP32-P4 board should handle:
+- The board should focus on:
   - network connectivity
   - local touch UI
-  - health/status display
-  - event and log display
-  - simple remote control actions
+  - status display
+  - event display
+  - lightweight remote control entry points
 
-Not recommended for V1:
+Not recommended for the current product direction:
 
-- full local LLM inference on the board
-- complex on-device multimodal reasoning
-- trying to make the board both the agent runtime and the rich UI frontend
+- full on-device LLM inference
+- trying to make the ESP32-P4 board both the heavy AI runtime and the polished operator console
 
-Reason:
+## What Exists Today
 
-- ESP32-P4 is strong for HMI, connectivity, camera/display pipelines, and edge orchestration.
-- It is not the right place for serious LLM execution.
+### Board / UI bring-up
 
-## Recommended V1 Scope
+Already implemented in the current codebase:
 
-### UI
+- display startup through `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+- backlight enable
+- `LVGL` object tree creation
+- embedded `TinyTTF` font loading
+- periodic screen refresh
+- a richer board-style Wi-Fi diagnostics layout in the current working tree
 
-- Full-screen dashboard in LVGL
-- Status header: online/offline, backend latency, Wi-Fi/Ethernet mode
-- Agent card: current state, active task, last heartbeat
-- Queue card: pending jobs, running jobs, failed jobs
-- Logs panel: latest events, warnings, failures
-- Action bar: reconnect, acknowledge alert, restart session, open details
+### Wi-Fi state pipeline
 
-### Data
+Already implemented:
 
-- Agent heartbeat
-- Current task metadata
-- Last error and error count
-- CPU or runtime load from the backend
-- Memory usage from the backend
-- Token or request counters if available
-- Network quality
+- Wi-Fi station initialization
+- event-driven state transitions
+- IP / DNS / MAC / RSSI / channel snapshot collection
+- screen-side rendering of the snapshot
 
-### Connectivity
+### Build / toolchain posture
 
-Preferred order:
+Current confirmed facts:
 
-1. HTTP polling for V1 bring-up
-2. WebSocket for live updates in V2
-3. MQTT only if the backend already uses it
+- the workspace points at `ESP-IDF v6.0.1`
+- the current session can read `ESP-IDF MCP` resources such as `project://config`
+- `project://status` timed out in this session, so MCP should be treated as available but timeout-sensitive rather than unavailable
+- the project already has recent build artifacts under `build/`
 
-Reason:
+So the environment constraint is no longer “SDK unusable”; the more accurate constraint is “MCP and build validation must distinguish timeout from actual failure.”
 
-- HTTP polling is simplest to debug on embedded targets.
-- WebSocket is better after the data model is stable.
+### Missing product layers
 
-## Proposed Firmware Architecture
+Still missing:
 
-## Modules
+- backend polling
+- AI agent heartbeat model
+- alert feed
+- action / control flows
+- a multi-page monitor dashboard
 
-- `app_main`
-  - boot flow
-  - task startup
-- `display_service`
-  - LCD init
-  - LVGL tick and render loop
-- `touch_service`
-  - touch input adapter
-- `network_service`
-  - Wi-Fi or Ethernet setup
-  - reconnect logic
+## Recommended Firmware Architecture
+
+### Keep
+
+- thin `app_main`
+- separate `network_service`
+- separate `ui_service`
+- official board `BSP`
+- hosted Wi-Fi configuration as the baseline network route
+
+### Add next
+
 - `backend_client`
-  - REST polling first
-  - JSON decode
-- `agent_state_store`
-  - shared latest monitor model
-- `ui_screens`
-  - dashboard
-  - logs
-  - details
-  - settings
-- `actions_service`
-  - send remote commands to backend
+- `agent_state`
 - `settings_store`
-  - saved endpoint, auth token, refresh interval
+- optional `touch_service` split if interaction complexity grows
 
-## Phase Proposal
+## Constraints That Matter Now
 
-### Phase 1
+### Hosted Wi-Fi route
 
-Bring up board UI foundation
+The board should still be understood as:
 
-- add board display and touch dependencies
-- light the LCD
-- render LVGL dashboard shell
-- prove stable frame refresh
+- `ESP32-P4` for UI, display, touch, and application logic
+- onboard `ESP32-C6` for `Wi-Fi 6 / BLE`
 
-### Phase 2
+That means networking work should continue from the `ESP-Hosted + esp_wifi_remote` baseline, not from a “plain local `esp_wifi` board” assumption.
 
-Bring up connectivity and backend contract
+### UI memory and first-frame stability
 
-- connect via Wi-Fi first
-- define monitor JSON schema
-- fetch mock or real backend status
-- show heartbeat and connection state
+The UI path now depends on:
 
-### Phase 3
+- `PSRAM`
+- `TinyTTF`
+- `LVGL` heap behavior
+- avoiding redundant large-font relayout during refresh
 
-Build usable monitoring dashboard
+So any future dashboard work should treat font, allocator, and refresh behavior as a first-class stability concern rather than as a cosmetic afterthought.
 
-- task state
-- event log
-- alert state
-- manual refresh and auto refresh
+### Local override components
 
-### Phase 4
+The project now carries local overrides for several board-related components. That is acceptable for the current `ESP-IDF v6.0.1` compatibility posture, but it introduces a maintenance constraint:
 
-Control actions and resilience
+- keep the overrides minimal
+- track upstream shape closely
+- avoid turning the repo into a permanent private fork of board support code
 
-- restart agent or workflow
-- acknowledge alarms
-- retry failed job
-- offline fallback states
+## Recommended Next Milestone
 
-### Phase 5
+1. Keep the existing Wi-Fi page as a diagnostics screen.
+2. Add a minimal `backend_client` using `HTTP polling`.
+3. Introduce a compact monitor state model:
+  - backend online / offline
+  - last heartbeat
+  - active task
+  - last error
+  - latency
+4. Add a simple overview screen above the current Wi-Fi diagnostics page.
 
-Optional multimodal expansion
+## V1 UI Scope
 
-- camera preview
-- microphone path
-- voice trigger
-- richer device-to-agent interaction
+Recommended pages:
 
-## First Technical Decision To Approve
+- overview page
+- Wi-Fi diagnostics page
+- alerts / events page
+- basic settings page
 
-Recommended default:
-
-- backend-hosted AI Agent
-- ESP32 board as remote monitor terminal
-- LVGL UI
-- Wi-Fi first
-- HTTP polling first
-
-If approved, the next concrete workflow is:
-
-1. initialize `.planning/` with `$gsd-new-project`
-2. make Phase 1 about LCD, touch, LVGL, and mock monitor data
-3. then implement board bring-up in code
-
-## Open Questions
-
-These answers decide the roadmap:
-
-1. Is this board only a monitor/control terminal, or must it also capture voice/camera input for the agent?
-2. Where does the AI Agent run now: PC, local server, NAS, cloud, or not built yet?
-3. Do you want V1 to use Wi-Fi only, or must Ethernet also be supported from the start?
+The current `wifi_info_screen` should evolve into a support page, not remain the final home screen.

@@ -1,0 +1,5 @@
+dependencies:
+  idf:
+    version: ">=4.0"
+description: Local ESP-IDF 6.x compatibility override for espressif/esp_codec_dev 1.2.0
+version: "1.2.0"

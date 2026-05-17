@@ -1,0 +1,6 @@
+dependencies:
+  cmake_utilities: 0.*
+  idf:
+    version: ">=5.3"
+description: Local ESP-IDF 6.x compatibility override for waveshare esp_lcd_st7703 1.0.5
+version: "1.0.5"

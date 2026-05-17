@@ -1,77 +1,181 @@
-# Integrations
+---
+last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+mapped_at: 2026-05-17
+---
 
-日期：2026-04-27
+# INTEGRATIONS
 
-## 现状
+## 运行时内部集成
 
-当前仓库还没有实现任何运行时外部集成。
+### `main` -> `ui_service`
 
-尚不存在以下内容：
+入口 `main/main.c` 在 `app_main()` 里首先调用：
 
-- 外部 HTTP API
-- WebSocket
-- MQTT Broker
-- 数据库
-- 鉴权服务
-- 云存储
-- 第三方日志平台
+- `wifi_info_screen_start()`
 
-## 已存在的开发期集成
+这条集成链路负责：
 
-虽然业务集成为空，但开发链路已经隐含依赖以下外部平台和资料：
+- 启动 `Waveshare BSP`
+- 初始化 `LVGL`
+- 打开背光
+- 构建页面对象树
+- 启动页面定时刷新
 
-### SDK 与工具链
+### `main` -> `network_service`
 
-- `ESP-IDF`
-- `idf.py`
-- `CMake`
-- `esp32p4` 交叉编译工具链
-- `VSCode` 的 `ESP-IDF` 插件与 `SDK Configuration Editor`
-- 当前工作区的 `.vscode/settings.json` 已记录 `idf.currentSetup = C:\esp\v5.5.4\esp-idf`
-- 在 Windows 终端中，若 `idf.py` 不在当前会话的 `PATH`，应先执行上述 `ESP-IDF` 根目录下的 `export.ps1`
-- `SDK Configuration Editor` 修改的是当前 `sdkconfig`，需要结合仓库根 `sdkconfig.defaults` 和 `idf.py reconfigure` 才能形成可提交、可复现的配置基线
+随后 `app_main()` 调用：
 
-### 板级软件资源
+- `network_service_start()`
 
-- Waveshare 官方板级 `BSP`：`waveshare/esp32_p4_wifi6_touch_lcd_4b`
-- 唯一依赖来源：Espressif Components `waveshare` 命名空间搜索页
-- 地址：<https://components.espressif.com/components?q=namespace:waveshare>
-- 不再把 GitHub 仓库或单个组件详情页作为本仓库的依赖来源基准
+这条链路负责把网络运行时带起来，并把状态暴露给 UI 读取。
 
-### 官方文档与硬件资料
+### `ui_service` -> `network_service`
 
-- 板卡主页与开发页面
-- 资料页中的主板原理图 PDF
-- 资料页中的子板原理图 PDF
-- `ESP32-P4` 数据手册
-- `ESP32-P4` 技术参考手册
+`components/ui_service/wifi_info_screen.c` 周期性调用：
 
-## 板级接口视角的“平台集成”
+- `network_service_get_snapshot(&s_snapshot_cache)`
 
-从硬件平台角度，后续会涉及这些集成点：
+当前 UI 不直接控制 `esp_wifi`，而是完全依赖快照接口。这是当前仓库里最清晰的模块边界之一：
 
-- `MIPI DSI` 显示链路
-- `GT911` 触摸输入
-- `ESP32-C6` 协处理器提供 `Wi-Fi 6 / BLE`
-- 麦克风与扬声器音频链路
-- `MIPI CSI` 摄像头链路
-- `Micro SD`
-- `Ethernet`
+- 网络层生产状态
+- UI 层消费状态
 
-注意：
+## BSP 与显示集成
 
-- 这些是硬件平台能力，不代表当前仓库已经实现了这些软件集成。
-- 现阶段最优先的是显示、触摸和联网，不是把所有外设一次接齐。
+当前显示链路优先复用：
 
-## 面向 AI 监控终端的建议业务集成顺序
+- `waveshare/esp32_p4_wifi6_touch_lcd_4b`
+- `waveshare/esp_lcd_st7703`
+- `espressif/esp_lvgl_port`
 
-1. `HTTP polling` 拉取状态
-2. 简单控制接口，例如重连、刷新、确认告警
-3. 稳定后再考虑 `WebSocket`
-4. 只有后端已明确使用时再接 `MQTT`
+其中 `ui_service` 对 BSP 的实际依赖包括：
 
-## 未决集成问题
+- `bsp_display_start_with_config()`
+- 背光控制
+- `LVGL` 端口初始化
 
-- 上位 `AI Agent` 运行在本地还是云端，当前仓库尚未固化
-- `Wi-Fi` 与 `Ethernet` 的优先级尚未在代码中体现
-- `ESP32-C6` 固件与联网路径是否需要额外适配，当前未知
+这意味着当前项目没有自建裸显示初始化层，而是把显示 bring-up 绑定在官方板级抽象之上。
+
+## 字体与资源集成
+
+`ui_service` 通过：
+
+- `target_add_binary_data(${COMPONENT_LIB} "assets/jnr_sb_font.ttf" BINARY RENAME_TO jnr_sb_font_ttf)`
+
+把字体资源打包进最终固件，然后在运行时通过 `TinyTTF` 创建字体对象。
+
+这条链路把以下层面串起来：
+
+- `CMake` 资源打包
+- 链接后的二进制符号
+- `LVGL TinyTTF`
+- 运行时 `PSRAM` / heap 行为
+
+因此字体问题不是“纯 UI 视觉问题”，而是显示、内存和调度的交叉集成点。
+
+## Wi-Fi Hosted 集成
+
+当前仓库的联网能力依赖以下组合：
+
+- `espressif/esp_hosted`
+- `espressif/esp_wifi_remote`
+- 板载 `ESP32-C6`
+- `SDIO` host interface
+
+相关配置落在：
+
+- `sdkconfig.defaults`
+- `sdkconfig`
+
+当前关键集成约束：
+
+- `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
+- `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y`
+- `CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y`
+- `CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y`
+- `# CONFIG_ESP_HOST_WIFI_ENABLED is not set`
+
+这条集成链路意味着：
+
+- 看到联网异常时，先检查 Hosted / Remote 路线是否跑偏
+- 不要默认把问题归因到本地 `esp_wifi` 业务代码
+
+## 项目内 override 集成
+
+当前 `main/idf_component.yml` 把多个第三方依赖指向仓库内 override：
+
+- `../components/espressif__esp_codec_dev`
+- `../components/waveshare__esp_lcd_st7703`
+- `../components/waveshare__esp32_p4_wifi6_touch_lcd_4b`
+
+与之对应，`dependencies.lock` 已把这些依赖解析成：
+
+- `type: local`
+- `path: components\\...`
+
+这层集成的风险和价值都很高：
+
+- 价值：能在 `ESP-IDF v6.0.1` 下及时修兼容问题
+- 风险：需要持续跟踪上游组件形状，避免仓库内长期漂移
+
+## 配置与业务参数集成
+
+业务配置通过 `components/network_service/Kconfig.projbuild` 暴露给 `menuconfig`：
+
+- `AI_MONITOR_WIFI_SSID`
+- `AI_MONITOR_WIFI_PASSWORD`
+- `AI_MONITOR_WIFI_HOSTNAME`
+- `AI_MONITOR_UI_REFRESH_MS`
+
+运行时消费关系是：
+
+- `network_service` 读取 `SSID` / 密码 / 主机名
+- `ui_service` 读取 `CONFIG_AI_MONITOR_UI_REFRESH_MS` 驱动刷新频率
+
+这使得当前仓库已经有一条完整的：
+
+- `Kconfig` -> `sdkconfig` -> 组件运行时
+
+集成链路。
+
+## ESP-IDF 工具链集成
+
+仓库 `AGENTS.md` 已明确要求工程动作优先走 `ESP-IDF MCP`。当前会话验证结果是：
+
+- `project://config` 可读
+- `project://devices` 已注册为资源
+- `project://status` 本次读取超时
+
+因此当前最准确的工具集成结论是：
+
+- MCP 已挂载并部分可用
+- 重资源读取可能受工具超时窗口影响
+- 不能因为一次超时就把 MCP 判死
+- 也不能省略 CLI 回退路径
+
+当前稳定 CLI 路线仍然是：
+
+- 激活 `ESP-IDF` 环境
+- 再执行 `idf.py`
+
+## 外部系统集成现状
+
+当前真正落地的外部集成还比较少：
+
+- `Waveshare BSP`
+- `ESP-IDF` 组件注册表
+- `ESP-IDF MCP`
+- GitHub 远程仓库
+
+这些能力还没有真正接入：
+
+- 后端 `HTTP polling`
+- `WebSocket`
+- `MQTT`
+- 监控告警服务
+- 云端 Agent 状态接口
+
+所以仓库目前更像：
+
+- 已把板级显示和网络诊断链路打通
+- 还没把业务后端链路接上

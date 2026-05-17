@@ -165,17 +165,111 @@
 结论：
 
 - 当前工程的已知路径是：
-  - `C:\esp\v5.5.4\esp-idf`
+  - `C:\esp\v6.0.1\esp-idf`
 - 终端里先执行：
 
 ```powershell
-& 'C:\esp\v5.5.4\esp-idf\export.ps1' *> $null
+$idfExports = & 'C:\Users\admin\AppData\Local\Python\bin\python.exe' 'C:\esp\v6.0.1\esp-idf\tools\activate.py' --export
+$idfExports = ($idfExports | Select-Object -Last 1).Trim()
+. $idfExports
 idf.py reconfigure
 ```
 
+### 8. `ESP-IDF 6.0.1` 把部分组件从 SDK 内部移出
+
+表现：
+
+- `v6.0.1` 下首次 `reconfigure/build` 直接在 CMake 依赖解析阶段失败
+- `waveshare__esp32_p4_wifi6_touch_lcd_4b` 解析不到 `usb`
+
+根因：
+
+- `ESP-IDF 6` 不再把旧 `usb` 组件作为 SDK 内部普通组件继续提供
+
+结论：
+
+- 项目侧需显式补：
+  - `espressif/usb`
+
+### 9. `ESP-IDF 6.0.1` 的 driver 组件继续细分
+
+表现：
+
+- 第三方组件在编译期陆续报：
+  - `driver/gpio.h`
+  - `driver/ledc.h`
+  - `driver/i2c_master.h`
+  - `driver/i2s_std.h`
+  - `driver/sdmmc_host.h`
+  找不到，或提示 `esp_driver_*` 不在 requirements list
+
+根因：
+
+- `REQUIRES driver` 已不足以覆盖 `v6.0.1` 下的新拆分驱动组件
+
+结论：
+
+- 对 `esp_codec_dev`、`waveshare BSP`、`esp_lcd_st7703` 这类第三方组件，
+  要显式声明对应的 `esp_driver_*` 子组件依赖
+
+### 10. `ESP-LCD` API 在 `v6.0.1` 下有字段迁移
+
+表现：
+
+- `esp_lcd_panel_dev_config_t::color_space` 报不存在
+- `esp_lcd_dpi_panel_config_t::pixel_format` 报不存在
+- `LCD_COLOR_PIXEL_FORMAT_RGB565/RGB888` 旧常量报未定义
+
+根因：
+
+- `ESP-LCD` 在 `v6.0.1` 中把旧字段改为：
+  - `rgb_ele_order`
+  - `bits_per_pixel`
+  - `in_color_format` / `out_color_format`
+
+结论：
+
+- `waveshare__esp_lcd_st7703` 和 `waveshare BSP` 在 `v6.0.1` 下需要做兼容映射，
+  不能直接沿用旧字段名
+
+### 11. `LVGL + TinyTTF` 首帧渲染会触发软件复位
+
+表现：
+
+- 串口日志在显示、触摸初始化完成后停在首帧 UI 阶段
+- 先出现 `taskLVGL` 长时间占用 CPU0
+- 进一步定位后触发：
+  - `assert failed: stbtt__new_active stb_truetype_htcw.h:3160 (z != ((void *)0))`
+  - `rst:0xc (SW_CPU_RESET)`
+
+根因：
+
+- `LVGL` 当时使用 builtin allocator
+- `LV_MEM_SIZE_KILOBYTES=64`
+- 首帧 `TinyTTF` 字形光栅化走 `lv_tiny_ttf.c -> lv_tlsf_malloc()`
+- `LVGL` 自己的 64KB 池不足，最终在 `stb_truetype` 路径断言
+
+结论：
+
+- 当前更稳的方案是：
+  - `CONFIG_LV_USE_CLIB_MALLOC=y`
+  - 保持 `CONFIG_LV_USE_TINY_TTF=y`
+- 如果后续切回 builtin allocator，必须重新评估 `LV_MEM_SIZE_KILOBYTES`
+
+### 12. 当前仍有两个非阻塞但需要继续跟踪的运行时问题
+
+已确认但未阻断启动：
+
+- `ledc: GPIO 26 is not usable, maybe conflict with others`
+- `Version mismatch: Host [2.12.0] > Co-proc [0.0.0]`
+
+结论：
+
+- 这两项应继续记录为 bring-up 阶段的后续排查项
+
 ## 当前已验证的关键配置
 
-以下组合在本仓库当前状态下已验证能编译，并能让 Wi-Fi 进入 Hosted 路线：
+以下组合在本仓库当前状态下已验证能编译、成功烧录，并能让 Wi-Fi 进入 Hosted 路线：
 
 ```ini
 # CONFIG_ESP_HOST_WIFI_ENABLED is not set
@@ -191,6 +285,9 @@ CONFIG_MAIN_TASK_STACK_SIZE=6144
 
 CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM=y
 # CONFIG_ESP_HOSTED_USE_MEMPOOL is not set
+
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_TINY_TTF=y
 ```
 
 ## 排查时优先看的日志
@@ -217,10 +314,11 @@ CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM=y
 
 1. 先确认 `sdkconfig.defaults` 是否仍保持 Hosted/Remote 正确组合
 2. 再确认 `sdkconfig` 是否被旧的显式配置覆盖
-3. 用 `export.ps1 + idf.py reconfigure + idf.py build` 重建当前生效态
+3. 用 `activate.py --export + idf.py reconfigure + idf.py build` 重建当前生效态
 4. 上板先看是否出现本地 `net80211` 日志
 5. 若无，再看是否卡在 `ESP-Hosted` 的 SDIO/mempool 阶段
-6. 若 transport 已起来但仍无法联网，再考虑板载 `C6` slave 固件版本
+6. 若显示已起来但反复 `SW_CPU_RESET`，优先检查 `LVGL` allocator 与 `TinyTTF`
+7. 若 transport 已起来但仍无法联网，再考虑板载 `C6` slave 固件版本
 
 ## 一句话结论
 

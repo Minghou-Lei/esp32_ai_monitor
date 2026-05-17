@@ -1,76 +1,171 @@
-# Conventions
+---
+last_mapped_commit: 24911b142360e77d719d9db5cfc54443770da247
+mapped_at: 2026-05-17
+---
 
-日期：2026-04-27
+# CONVENTIONS
 
-## 已观察到的现状约定
+## 入口与模块边界
 
-当前代码量非常少，可直接观察到的约定有限：
+### `app_main()` 保持轻量
 
-- 使用 `ESP-IDF` 标准 `app_main()` 作为入口
-- 使用 `idf_component_register()` 注册组件
-- 当前代码语言为 `C`
-- 根构建使用 `CMake`
+当前 `main/main.c` 只做两件事：
 
-## 应继续坚持的约定
+- 启动 `wifi_info_screen_start()`
+- 启动 `network_service_start()`
 
-### 入口约定
+这条约定已经落地，不应回退成把显示、网络、协议解析再塞回 `main`。
 
-- `main/main.c` 保持轻量
-- `app_main()` 只做启动编排，不做复杂业务处理
+### 业务能力优先拆进 `components/`
 
-### 模块约定
+当前正向示例已经存在：
 
-- 新能力优先拆到 `components/` 下
-- 不要把显示、触摸、网络、协议解析堆到同一个源文件里
+- `components/network_service`
+- `components/ui_service`
 
-### 依赖约定
+后续如果增加监控协议、状态存储或控制能力，优先继续沿组件边界扩展，而不是把逻辑压回单文件。
 
-- 优先复用官方 `BSP`
-- 优先使用 `ESP-IDF` 组件管理器
-- 新增三方依赖时，优先写入 `idf_component.yml`
-- 微雪官方 `ESP32-P4-WIFI6-Touch-LCD-4B` 依赖的来源只认 <https://components.espressif.com/components?q=namespace:waveshare>
-- 如需升级或新增 `waveshare` 命名空间组件，先查上述搜索页，再更新 `idf_component.yml` 与 `dependencies.lock`
+## 配置管理约定
 
-### UI 约定
+### `sdkconfig.defaults` 是持久基线
 
-- `UI` 统一走 `LVGL`
-- 页面必须显式区分“初始化中、在线、离线、错误、空数据”状态
-- 监控类界面优先保证信息密度与可读性
+当前仓库已经把设计基线与机器态分开：
 
-### 网络约定
+- `sdkconfig.defaults`
+  - 应提交、可复现
+- `sdkconfig`
+  - 当前机器生效态
 
-- `V1` 优先 `HTTP polling`
-- `WebSocket` 在数据模型稳定后再引入
-- `MQTT` 只有在上位系统已采用时才接入
-- 对 `ESP32-P4-WIFI6-Touch-LCD-4B`，板载 `Wi-Fi` 默认按 `ESP-Hosted + esp_wifi_remote` 处理，不要把它当成本地 `esp_wifi` 直连板
-- 排查 `Wi-Fi` bring-up 时，先看是否误开了 `CONFIG_ESP_HOST_WIFI_ENABLED`，再看 transport / `C6` 路线
+涉及这些内容时，应优先落到 `sdkconfig.defaults`：
 
-### 文档约定
+- target
+- flash size
+- 分区表
+- `PSRAM`
+- Hosted / Wi-Fi Remote
+- `LWIP`
+- `LVGL` allocator
+- 显示相关能力开关
 
-- 中文文档中，中英文与数字混排保持可读性
-- 当前仓库的板卡结论优先沉淀到 `AGENTS.md` 与 `.planning/`
-- 推荐把“现状”与“建议”分开写，避免误导后续 agent
+### 不把本机私有项沉淀到默认基线
 
-## 错误处理约定
+当前 `sdkconfig` 可能带本机 `Wi-Fi` 凭据和主机名，因此应继续坚持：
 
-当前代码尚未建立统一错误处理模式，建议后续明确：
+- 不把 `SSID` / 密码复制进 `sdkconfig.defaults`
+- 文档不展开本机敏感值
+- 评审 `sdkconfig` 时先检查是否混入私有配置
 
-- 初始化阶段的失败日志
-- 网络失败时的重试与 UI 提示
-- 触摸、显示、后端请求等链路错误不要静默吞掉
+## 依赖来源与 override 约定
 
-## 配置约定
+### 优先官方组件形状
 
-- 已提交的 `ESP-IDF` 持久配置基线放在仓库根的 `sdkconfig.defaults`
-- 仓库根的 `sdkconfig` 只代表当前生效态，不应被当成唯一长期来源
-- 使用 `SDK Configuration Editor` 或 `menuconfig` 后，如果配置要长期保留，必须把相关项同步回 `sdkconfig.defaults`
-- 将 `sdkconfig.defaults` 更新到位后，运行 `idf.py reconfigure`，让当前 `sdkconfig` 与构建目录重新吃一遍默认值
-- 在 Windows 环境中，如果终端无法直接识别 `idf.py`，优先从 `.vscode/settings.json` 的 `idf.currentSetup` 获取 `ESP-IDF` 根目录，再执行对应 `export.ps1`
-- 修改 `sdkconfig` 前先明确影响范围
-- 修改 `flash`、分区表、显示参数、`PSRAM` 策略时，必须补文档
-- 修改 `ESP-Hosted`、`Wi-Fi Remote`、`LWIP` 缓冲区等板级联网参数时，也必须补文档
-- 板级参数优先来源于官方 `BSP`、原理图和官方手册，不要凭印象写死
-- `idf.py save-defconfig` 只在确认输出内容安全后再使用；它可能把本机 `SSID`、密码或其他本地调试项一并导出
-- 对本项目当前已知的 Hosted 路线，`# CONFIG_ESP_HOST_WIFI_ENABLED is not set` 是重要约束；看到本地 `net80211` 风格日志时，优先检查这里
-- 如果 `ESP-Hosted` 在 `SDIO` bring-up 阶段报 `mempool create failed: no mem`，优先从内部 DMA 内存压力方向排查，而不是先回退功能
-- 这次 bring-up 的系统性坑点与修复路径已沉淀在 `.planning/research/2026-04-27-esp32-p4-wifi-bringup-pitfalls.md`
+板级依赖的来源基准仍然是 `components.espressif.com` 下的 `waveshare` 命名空间，而不是第三方博客或随手拷贝的仓库。
+
+### 允许最小 override，但不鼓励长期分叉
+
+当前仓库已经存在本地 override 组件，这是当前工作树事实。对应约定应明确为：
+
+- 可以为了 `ESP-IDF v6.0.1` 兼容性做最小 patch
+- patch 目标是“保住官方组件路线”
+- 不要把 override 演变成长期自维护的大 fork
+
+## Wi-Fi 路线约定
+
+当前项目不是“P4 本地直驱无线”的假设，而是：
+
+- `ESP32-P4 host`
+- `ESP32-C6` 无线协处理器
+- `ESP-Hosted + esp_wifi_remote`
+
+因此后续应坚持：
+
+- 不打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
+- 联网异常先检查 Hosted / Remote 配置与依赖组合
+- 看到 `net80211` 风格异常时先怀疑路线跑偏
+
+## UI 与内存约定
+
+### 统一走 `LVGL`
+
+当前 UI 全部基于 `LVGL`，并依赖 `Waveshare BSP`。后续不要再引入第二套本地 UI 体系。
+
+### `PSRAM + TinyTTF + allocator` 要一起看
+
+当前仓库已把：
+
+- `CONFIG_SPIRAM=y`
+- `CONFIG_LV_USE_CLIB_MALLOC=y`
+- `CONFIG_LV_USE_TINY_TTF=y`
+
+作为更稳的组合写进默认基线。
+
+因此约定应明确：
+
+- 不要默认 `LVGL` builtin `64KB` 池足够承载首帧字形缓存
+- 看到首帧 `SW_CPU_RESET` 或 `stb_truetype` 相关断言时，先查字体和堆路径
+- 改字体、改 allocator、改 `PSRAM`、改显示缓冲，都要重新评估这条链路
+
+### UI 刷新只更新变化文本
+
+当前 `wifi_info_screen.c` 已显式加入“仅在文本变化时才 `lv_label_set_text()`”的做法，这不是偶然优化，而是当前页面的稳定性约定之一。
+
+原因：
+
+- 页面使用多个 `TinyTTF` 大字号对象
+- 无差别反复更新会放大字形缓存与布局开销
+- 可能导致 `taskLVGL` 长时间占用 CPU 并触发 watchdog
+
+## 工程操作约定
+
+### `ESP-IDF` 工程动作优先 MCP
+
+仓库 `AGENTS.md` 已把这条写成显式规则，当前会话事实也支持它：
+
+- `project://config` 可读
+- `project://status` 本次读取超时
+
+因此实际执行约定应是：
+
+- 先用 MCP
+- 区分“超时”与“失败”
+- MCP 不可用或不支持时明确回退 CLI
+- 回退原因必须写清楚
+
+### 构建 / 配置改动后要回归
+
+涉及以下内容时，不能只看代码 diff：
+
+- 组件依赖
+- `sdkconfig.defaults`
+- 分区表
+- 显示链路
+- Hosted Wi-Fi 配置
+
+最小回归路径应是：
+
+1. `reconfigure`
+2. `build`
+3. 需要时 `flash monitor`
+
+## 文档约定
+
+### `.planning/codebase` 描述当前工作树事实
+
+当前仓库长期处于边做边验证状态，因此 `.planning/codebase` 不应假装自己只描述“最后一次已提交版本”。
+
+当前更合适的约定是：
+
+- `last_mapped_commit` 记录提交基线
+- 正文明确说明是否纳入当前未提交实现
+- 发现文档与工作树不一致时优先刷新映射，而不是套用旧结论
+
+### canonical 文档留在 `README.md` 与 `docs/`
+
+当前项目文档层次已经形成：
+
+- `README.md`
+- `docs/*.md`
+- `.planning/codebase/*.md`
+- `.planning/research/*.md`
+
+前两者面向项目使用与设计；后两者更偏 agent / 工程内部参考。

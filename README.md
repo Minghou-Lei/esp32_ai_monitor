@@ -1,81 +1,102 @@
 # esp32_ai_monitor
 
-基于 `ESP-IDF` 的 `ESP32-P4` 监控终端项目，目标硬件是 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`。
+中文 | [English](#english)
 
-当前项目定位不是“在板子上直接运行完整 AI Agent”，而是做一个带触摸屏的本地监控与配置终端：
+基于 `ESP-IDF` 的 `ESP32-P4` 监控终端项目，目标硬件为 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`。  
+当前项目定位不是“在板子上直接运行完整 AI Agent”，而是构建一个带触摸屏的本地监控与配置终端：板子负责 UI、联网、状态展示、配置入口与少量控制动作，真正的 AI / 监控后端运行在 PC、本地服务器、NAS 或云端。
 
-- 板子负责 UI、状态展示、联网、配置入口和少量控制动作
-- 真正的 AI / 监控后端运行在 PC、本地服务器、NAS 或云端
-- 固件优先保证 bring-up、状态可观测和运维入口可用
+![ESP32 AI Monitor Live Dashboard](./docs/images/dashboard-live.jpg)
 
-## 当前工作树状态
+## 中文
 
-当前本地实现已经包含：
+### 项目定位
 
-- `ESP-IDF v6.0.1` + `esp32p4` 工程骨架
-- `waveshare` 官方 `BSP` 路线
-- `ESP-Hosted + esp_wifi_remote` 无线链路
-- `app_config_service`
-  - 统一管理 Wi-Fi、门户、配置热点、provider 和 UI 刷新配置
-- `network_service`
-  - 管理 `STA`、企业认证、门户状态和 `SoftAP` 回退
-- `provider_service`
-  - 轮询外部 provider，并输出统一状态快照
-- `config_web_service`
-  - 提供板上配置页与本地 REST 接口
-- `ui_service`
-  - 渲染基于 `LVGL` 的主监控屏
+- 面向 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`
+- 基于 `ESP-IDF v6.0.1`
+- 当前以“板上监控屏 + 本地配置门户”为核心目标
+- 优先保证 bring-up、状态可观测、配置可维护、现场可运维
 
-这意味着当前项目已经不再是早期单功能诊断原型，而是“监控终端骨架 + 本地配置门户”的阶段。
+### 当前已实现能力
 
-## 已实现能力
+- 基于 `waveshare` 官方 `BSP` 启动显示、背光与触摸链路
+- 基于 `LVGL + TinyTTF` 渲染主监控屏
+- 使用 `ESP-Hosted + esp_wifi_remote` 跑通 `ESP32-P4 + ESP32-C6` 无线链路
+- 统一管理 Wi‑Fi、企业认证、门户、provider 与 UI 刷新配置
+- 提供本地配置网页和 REST 接口
+- 轮询外部 provider，并在板上展示额度、剩余、增量和小时消费等状态
 
-- 启动板级显示与背光
-- 加载内嵌 `TinyTTF` 字体
-- 展示网络、门户和 provider 状态
-- 支持运行期读取与保存配置
-- 支持本地配置网页
-- 支持 provider 轮询与额度 / delta 类状态展示
+### 当前主界面
 
-## 当前未完成能力
+当前板上主界面聚焦“监控总览 + 诊断入口”，主要展示：
 
-- 多 provider 扩展
-- 更完整的控制动作
-- 多页面导航与更完整的监控总览
-- 自动化测试与 CI
-- 更成熟的后端状态模型
+- 当前可用额度
+- 倒计时剩余时间
+- `Avail %` 剩余额度百分比
+- `DELTA` 自上次成功抓取以来的金额变化
+- `$ / Hour` 最近一小时金额消耗
+- 底部网络、provider 与诊断状态文本
 
-## 目录结构
+### 运行时架构
+
+当前工作树已经形成这几层运行时分工：
+
+1. 启动编排层：`main/main.c`
+2. 配置中心层：`components/app_config_service`
+3. 网络接入层：`components/network_service`
+4. Provider 轮询层：`components/provider_service`
+5. 本地交互层：
+   `components/config_web_service`
+   `components/ui_service`
+
+当前 `app_main()` 的启动顺序是：
+
+1. `wifi_info_screen_start()`
+2. `network_service_start()`
+3. `provider_service_start()`
+4. `config_web_service_start()`
+
+注意：`ui_service` 的主实现已经迁移到 `monitor_dashboard_screen.c`，但对外入口名仍沿用 `wifi_info_screen_start()`。
+
+### 目录结构
 
 - `main/`
-  - 应用入口与组件依赖声明
+  应用入口与组件依赖声明
 - `components/app_config_service/`
-  - 统一运行时配置模型与 NVS 持久化
+  统一运行时配置模型、默认值装配与 `NVS` 持久化
 - `components/network_service/`
-  - Wi-Fi 接入、门户状态、配置热点回退
+  `STA`、企业认证、门户状态与 `SoftAP` 回退
 - `components/provider_service/`
-  - 外部 provider 轮询与状态归一化
+  外部 provider 轮询、状态快照、delta 与小时统计
 - `components/config_web_service/`
-  - 板上配置网页与 REST 接口
+  板上配置网页与本地 REST 接口
 - `components/ui_service/`
-  - `BSP + LVGL` 主监控屏
+  `BSP + LVGL` 主监控屏
 - `docs/`
-  - 项目说明文档
+  项目说明、开发、测试与架构文档
 - `.planning/`
-  - 代码映射、研究记录和工程分析资料
+  代码映射、研究记录与工程分析资料
 
-## 构建前置
+### 硬约束与设计基线
 
-至少确认这些条件：
+当前仓库的关键基线包括：
 
-- 已安装 `ESP-IDF v6.0.1`
-- 当前 target 为 `esp32p4`
-- 目标板为 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`
-- 本地能解析仓库声明的 `managed_components` 与项目级 override 组件
+- `target = esp32p4`
+- `32MB flash`
+- 自定义分区表 `partitions_32mb_singleapp.csv`
+- `PSRAM`
+- `LVGL + TinyTTF + CLIB malloc`
+- `ESP-Hosted + esp_wifi_remote`
 
-## 构建与烧录
+无线链路的正确理解是：
 
-按仓库约定，`ESP-IDF` 工程动作优先使用 MCP。手动在 PowerShell 中操作时，可在仓库根目录执行：
+- `ESP32-P4` 负责主控、UI 与业务逻辑
+- 板载 `ESP32-C6` 负责无线协处理
+
+不要把该项目按“P4 本地原生 Wi‑Fi 板型”理解，也不要打开 `CONFIG_ESP_HOST_WIFI_ENABLED`。
+
+### 构建与烧录
+
+按仓库约定，`ESP-IDF` 工程动作优先使用 MCP；手动在 PowerShell 中操作时，可在仓库根目录执行：
 
 ```powershell
 idf.py reconfigure
@@ -89,49 +110,231 @@ idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
-优先使用板上的 `USB TO UART` 口进行烧录和串口观察，不要默认使用 `USB OTG`。
+建议优先使用板载 `USB TO UART` 口进行烧录与串口调试，不要默认使用 `USB OTG`。
 
-## 关键配置方向
+### 配置模型
 
-`sdkconfig.defaults` 当前固定了这些关键意图：
+当前配置按四层理解：
 
-- `32MB flash`
-- 自定义分区表
-- `PSRAM`
-- Hosted / Wi-Fi Remote
-- `LVGL TinyTTF`
-- `LVGL CLIB malloc`
+- `sdkconfig.defaults`
+  可提交、可复用的构建期默认基线
+- `sdkconfig`
+  当前机器的生效态
+- `NVS`
+  运行时配置覆盖
+- `config_web_service`
+  运行时的人机配置入口
 
-这些都属于当前设计基线，不应随意回退。
+运行时统一配置目前覆盖：
 
-## 敏感信息约定
+- Wi‑Fi 接入参数
+- 企业认证参数
+- 门户元数据
+- 配置热点参数
+- Provider 端点与鉴权信息
+- UI 刷新周期
 
-仓库当前已经存在多类运行时敏感配置：
+### 当前验证方式
 
-- Wi-Fi 密码
-- EAP 凭据
-- 门户凭据
-- provider token
-- provider 用户头值
+当前仓库还没有单元测试、组件测试或 CI，因此主要验证方式是：
+
+1. `idf.py build`
+2. 上板 `flash`
+3. 串口启动日志检查
+4. 屏幕实际显示检查
+5. 配置网页与 provider 轮询手工回归
+
+涉及显示、无线、配置网页或 provider 数据模型的改动，不应只看编译结果，最终仍要以上板回归为准。
+
+### 敏感信息约定
+
+仓库当前已经涉及多类敏感字段，例如：
+
+- Wi‑Fi 密码
+- 企业认证凭据
+- 门户用户名 / 密码
+- Provider token
+- Provider 用户头值
 
 因此：
 
-- 不把本机实际值写进文档
-- 不把本机敏感项沉淀到 `sdkconfig.defaults`
-- 评审 `sdkconfig` 时优先检查是否混入私有配置
+- 不把本机实际值写入文档
+- 不把敏感项写回 `sdkconfig.defaults`
+- 评审 `sdkconfig`、日志和网页返回值时优先检查是否泄露
 
-## 开发注意事项
+### 相关文档
 
-- 不要把这块板当成“P4 本地原生 Wi-Fi 板型”
-- 不要打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
-- 改显示、字体、allocator 或 `PSRAM` 配置时，重新评估首帧内存峰值
-- 改组件依赖、分区或默认配置后，至少重新 `reconfigure` 和 `build`
-- 涉及显示或网络关键路径的改动，最终仍要上板验证
-
-## 参考文档
-
+- [docs/GETTING-STARTED.md](./docs/GETTING-STARTED.md)
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
 - [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)
+- [docs/TESTING.md](./docs/TESTING.md)
+
+---
+
+## English
+
+### Project Positioning
+
+This repository targets the `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B` and is built on `ESP-IDF v6.0.1`.
+
+The current goal is not to run a full AI agent on the board itself. Instead, this project builds a local touch-enabled monitoring and configuration terminal:
+
+- the board handles UI, networking, status visualization, configuration entry points, and small control actions
+- the actual AI / monitoring backend runs on a PC, local server, NAS, or cloud environment
+- the firmware prioritizes bring-up, observability, maintainability, and field operability
+
+### Current Capabilities
+
+- Display, backlight, and touch bring-up through the official `waveshare` `BSP`
+- Main dashboard rendered with `LVGL + TinyTTF`
+- Wireless connectivity through `ESP-Hosted + esp_wifi_remote` on the `ESP32-P4 + ESP32-C6` split architecture
+- Unified runtime configuration for Wi‑Fi, enterprise auth, portal metadata, provider settings, and UI refresh intervals
+- On-device configuration web UI and local REST endpoints
+- External provider polling with board-side visualization for balance, remaining quota, delta usage, and hourly spending
+
+### Current Dashboard
+
+The current dashboard is designed as a compact monitoring overview plus diagnostic entry point. It focuses on:
+
+- current remaining balance
+- countdown-to-expiry
+- `Avail %` remaining quota percentage
+- `DELTA` amount change since the last successful fetch
+- `$ / Hour` spending within the latest one-hour window
+- bottom diagnostic text for network, provider, and runtime state
+
+### Runtime Architecture
+
+The current codebase is structured into these runtime layers:
+
+1. Boot orchestration: `main/main.c`
+2. Configuration center: `components/app_config_service`
+3. Network access layer: `components/network_service`
+4. Provider polling layer: `components/provider_service`
+5. Local interaction layer:
+   `components/config_web_service`
+   `components/ui_service`
+
+Current `app_main()` startup order:
+
+1. `wifi_info_screen_start()`
+2. `network_service_start()`
+3. `provider_service_start()`
+4. `config_web_service_start()`
+
+Note: the main UI implementation already lives in `monitor_dashboard_screen.c`, while the public entry point still keeps the legacy `wifi_info_screen_start()` name.
+
+### Repository Layout
+
+- `main/`
+  Application entry point and component dependency declaration
+- `components/app_config_service/`
+  Unified runtime config model, default loading, and `NVS` persistence
+- `components/network_service/`
+  `STA`, enterprise auth, portal state, and `SoftAP` fallback
+- `components/provider_service/`
+  External provider polling, normalized snapshots, delta, and hourly stats
+- `components/config_web_service/`
+  On-device configuration web UI and local REST APIs
+- `components/ui_service/`
+  Main dashboard built with `BSP + LVGL`
+- `docs/`
+  Architecture, configuration, development, and testing documents
+- `.planning/`
+  Codebase mapping, research notes, and engineering analysis artifacts
+
+### Hard Constraints and Baseline
+
+The current project baseline includes:
+
+- `target = esp32p4`
+- `32MB flash`
+- custom partition table `partitions_32mb_singleapp.csv`
+- `PSRAM`
+- `LVGL + TinyTTF + CLIB malloc`
+- `ESP-Hosted + esp_wifi_remote`
+
+The wireless architecture must be understood correctly:
+
+- `ESP32-P4` handles the main application, UI, and business logic
+- the onboard `ESP32-C6` acts as the wireless coprocessor
+
+Do not treat this repository as a native single-chip P4 Wi‑Fi project, and do not enable `CONFIG_ESP_HOST_WIFI_ENABLED`.
+
+### Build and Flash
+
+Per repository convention, `ESP-IDF` engineering actions should prefer MCP first.  
+When using PowerShell manually from the repo root, the common commands are:
+
+```powershell
+idf.py reconfigure
+```
+
+```powershell
+idf.py build
+```
+
+```powershell
+idf.py -p <PORT> flash monitor
+```
+
+Use the onboard `USB TO UART` port for flashing and serial logging by default. Do not assume `USB OTG` is the flashing path.
+
+### Configuration Model
+
+Configuration is currently layered as:
+
+- `sdkconfig.defaults`
+  committed and reusable build-time baseline
+- `sdkconfig`
+  effective state on the current machine
+- `NVS`
+  runtime overrides
+- `config_web_service`
+  runtime human-facing configuration entry point
+
+The current runtime config model covers:
+
+- Wi‑Fi access parameters
+- enterprise authentication parameters
+- portal metadata
+- config AP parameters
+- provider endpoint and auth settings
+- UI refresh interval
+
+### Current Validation Approach
+
+The repository does not yet have unit tests, component tests, or CI. Validation is therefore centered on:
+
+1. `idf.py build`
+2. board flashing
+3. serial boot log inspection
+4. real screen verification
+5. manual regression for the config web UI and provider polling path
+
+For changes that affect display, wireless, config web flows, or provider data modeling, a successful build alone is not enough. Real hardware verification remains the final gate.
+
+### Sensitive Data Rules
+
+The repository already deals with sensitive runtime fields, such as:
+
+- Wi‑Fi passwords
+- enterprise authentication credentials
+- portal usernames / passwords
+- provider tokens
+- provider-specific user header values
+
+Therefore:
+
+- do not write machine-specific real values into documentation
+- do not copy sensitive values back into `sdkconfig.defaults`
+- review `sdkconfig`, logs, and web responses for accidental leakage
+
+### Related Documents
+
 - [docs/GETTING-STARTED.md](./docs/GETTING-STARTED.md)
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
+- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)
 - [docs/TESTING.md](./docs/TESTING.md)

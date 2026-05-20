@@ -1,0 +1,153 @@
+menu "AI Monitor Configuration"
+
+    config AI_MONITOR_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Default station SSID used on first boot before runtime overrides are saved.
+
+    config AI_MONITOR_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Default station password used on first boot before runtime overrides are saved.
+
+    config AI_MONITOR_WIFI_HOSTNAME
+        string "Wi-Fi hostname"
+        default "esp32-ai-monitor"
+        help
+            Default hostname applied to the station netif.
+
+    choice AI_MONITOR_WIFI_SECURITY_MODE
+        prompt "Wi-Fi security mode"
+        default AI_MONITOR_WIFI_SECURITY_WPA2_PSK
+        help
+            Default station authentication mode for first-boot configuration.
+
+        config AI_MONITOR_WIFI_SECURITY_OPEN
+            bool "Open"
+
+        config AI_MONITOR_WIFI_SECURITY_WPA2_PSK
+            bool "WPA2-PSK"
+
+        config AI_MONITOR_WIFI_SECURITY_WPA2_ENTERPRISE
+            bool "WPA2-Enterprise"
+    endchoice
+
+    config AI_MONITOR_WIFI_EAP_IDENTITY
+        string "EAP identity"
+        default ""
+        help
+            Optional enterprise Wi-Fi identity used for PEAP/TTLS style authentication.
+
+    config AI_MONITOR_WIFI_EAP_USERNAME
+        string "EAP username"
+        default ""
+        help
+            Default enterprise Wi-Fi username.
+
+    config AI_MONITOR_WIFI_EAP_PASSWORD
+        string "EAP password"
+        default ""
+        help
+            Default enterprise Wi-Fi password.
+
+    config AI_MONITOR_WIFI_PORTAL_ENABLED
+        bool "Enable company portal metadata"
+        default n
+        help
+            Mark that this network requires an additional OA / device-registration portal step.
+
+    config AI_MONITOR_WIFI_PORTAL_URL
+        string "Portal URL"
+        default "http://1.1.1.1"
+        help
+            Company portal page exposed after the board joins the intranet.
+
+    config AI_MONITOR_WIFI_PORTAL_USERNAME
+        string "Portal username"
+        default ""
+        help
+            Default username shown in the config page for the OA / portal flow.
+
+    config AI_MONITOR_WIFI_PORTAL_PASSWORD
+        string "Portal password"
+        default ""
+        help
+            Default password shown in the config page for the OA / portal flow.
+
+    config AI_MONITOR_CONFIG_AP_ENABLED
+        bool "Enable configuration AP fallback"
+        default y
+        help
+            Start a dedicated config AP so the board still exposes its web setup page before STA is usable.
+
+    config AI_MONITOR_CONFIG_AP_SSID
+        string "Configuration AP SSID"
+        default "ESP32-AI-Monitor-Setup"
+        help
+            SSID advertised by the board's local fallback AP.
+
+    config AI_MONITOR_CONFIG_AP_PASSWORD
+        string "Configuration AP password"
+        default "esp32setup"
+        help
+            WPA2 password used by the fallback AP. Leave empty to expose an open AP.
+
+    config AI_MONITOR_PROVIDER_DISPLAY_NAME
+        string "Provider display name"
+        default "aqi"
+        help
+            Display name shown in the dashboard and config page for the active provider.
+
+    config AI_MONITOR_PROVIDER_BASE_URL
+        string "Provider base URL"
+        default "https://api2.apiaqi.com"
+        help
+            Base URL used by the active provider implementation.
+
+    config AI_MONITOR_PROVIDER_ENDPOINT_PATH
+        string "Provider endpoint path"
+        default "/api/subscription/self"
+        help
+            Relative endpoint path appended to the provider base URL.
+
+    config AI_MONITOR_PROVIDER_ACCESS_TOKEN
+        string "Provider access token"
+        default ""
+        help
+            Default bearer token or access token used by the active provider.
+
+    config AI_MONITOR_PROVIDER_MANAGEMENT_KEY
+        string "Provider management key"
+        default ""
+        help
+            Optional management key kept separate from the bearer token for future providers.
+
+    config AI_MONITOR_PROVIDER_USER_HEADER_NAME
+        string "Provider user header name"
+        default "New-Api-User"
+        help
+            Header name used to pass provider-specific user identity.
+
+    config AI_MONITOR_PROVIDER_USER_HEADER_VALUE
+        string "Provider user header value"
+        default "1072"
+        help
+            Header value used to pass provider-specific user identity.
+
+    config AI_MONITOR_PROVIDER_REFRESH_MS
+        int "Provider refresh interval (ms)"
+        range 10000 600000
+        default 60000
+        help
+            Polling interval for the active provider.
+
+    config AI_MONITOR_UI_REFRESH_MS
+        int "Dashboard refresh interval (ms)"
+        range 250 5000
+        default 1000
+        help
+            LVGL refresh interval for the on-screen dashboard.
+
+endmenu

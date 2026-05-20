@@ -28,6 +28,7 @@
 static const char *TAG = "wifi_info_screen";
 static const uint32_t WIFI_INFO_SCREEN_DRAW_BUFFER_LINES = 20;
 static const uint32_t WIFI_INFO_SCREEN_FIRST_REFRESH_MS = 200;
+static const uint32_t WIFI_INFO_SCREEN_DELTA_FLASH_MS = 200;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_SMALL = 20;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_MEDIUM = 28;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_BALANCE = 58;
@@ -87,9 +88,8 @@ static lv_font_t *s_font_delta;
 static network_service_snapshot_t s_snapshot_cache;
 static provider_service_snapshot_t s_provider_snapshot_cache;
 static char s_text_buffer[1536];
-static uint32_t s_delta_flash_ticks_remaining;
-static uint32_t s_delta_flash_toggle_count;
 static int64_t s_last_delta_flash_marker;
+static lv_timer_t *s_delta_flash_restore_timer;
 
 extern const uint8_t jnr_sb_font_ttf_start[] asm("_binary_jnr_sb_font_ttf_start");
 extern const uint8_t jnr_sb_font_ttf_end[] asm("_binary_jnr_sb_font_ttf_end");
@@ -100,6 +100,7 @@ static void wifi_info_screen_appendf(size_t *offset, const char *format, ...);
 static void wifi_info_screen_build_details_text(void);
 static const char *wifi_info_screen_get_countdown_text(int64_t end_time_unix_seconds);
 static uint32_t wifi_info_screen_get_progress_color(uint32_t progress);
+static void wifi_info_screen_restore_delta_flash(lv_timer_t *timer);
 
 static const char *wifi_info_screen_get_countdown_text(int64_t end_time_unix_seconds)
 {
@@ -679,6 +680,17 @@ static void wifi_info_screen_update_delta_progress_fill(void)
     lv_obj_set_style_bg_color(s_secondary_row.strip_fill_panel, lv_color_hex(fill_color), 0);
 }
 
+static void wifi_info_screen_restore_delta_flash(lv_timer_t *timer)
+{
+    if (timer == s_delta_flash_restore_timer) {
+        s_delta_flash_restore_timer = NULL;
+    }
+
+    wifi_info_screen_set_delta_flash_visual(false);
+    wifi_info_screen_update_delta_progress_fill();
+    lv_timer_delete(timer);
+}
+
 static uint32_t wifi_info_screen_get_primary_available_percent(const provider_service_item_t *item)
 {
     if (!wifi_info_screen_has_subscription(item)) {
@@ -900,16 +912,17 @@ static void wifi_info_screen_refresh(lv_timer_t *timer)
     if ((s_provider_snapshot_cache.last_success_interval_seconds > 0U)
         && (s_provider_snapshot_cache.last_fetch_unix_seconds != s_last_delta_flash_marker)) {
         s_last_delta_flash_marker = s_provider_snapshot_cache.last_fetch_unix_seconds;
-        s_delta_flash_ticks_remaining = 6U;
-        s_delta_flash_toggle_count = 0U;
-    }
-
-    if (s_delta_flash_ticks_remaining > 0U) {
-        bool inverted = ((s_delta_flash_toggle_count % 2U) == 0U);
-        wifi_info_screen_set_delta_flash_visual(inverted);
-        s_delta_flash_ticks_remaining--;
-        s_delta_flash_toggle_count++;
-    } else {
+        wifi_info_screen_set_delta_flash_visual(true);
+        if (s_delta_flash_restore_timer != NULL) {
+            lv_timer_delete(s_delta_flash_restore_timer);
+        }
+        s_delta_flash_restore_timer =
+            lv_timer_create(wifi_info_screen_restore_delta_flash, WIFI_INFO_SCREEN_DELTA_FLASH_MS, NULL);
+        if (s_delta_flash_restore_timer == NULL) {
+            wifi_info_screen_set_delta_flash_visual(false);
+            wifi_info_screen_update_delta_progress_fill();
+        }
+    } else if (s_delta_flash_restore_timer == NULL) {
         wifi_info_screen_set_delta_flash_visual(false);
         wifi_info_screen_update_delta_progress_fill();
     }

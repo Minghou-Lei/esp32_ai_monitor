@@ -3,25 +3,26 @@
 
 ## 配置分层
 
-当前项目的配置应按四层理解：
+当前项目配置分为四层：
 
 - `sdkconfig.defaults`
-  - 可提交、可复用的构建期默认基线
+  - 可提交、可复用的固件配置基线。
 - `sdkconfig`
-  - 当前机器的生效态
-- `NVS`
-  - 运行时配置覆盖存储
-- `config_web_service`
-  - 运行时的人机配置入口
+  - 当前机器的生效态，已被 `.gitignore` 忽略。
+- `components/app_config_service/Kconfig.projbuild`
+  - 应用级运行时默认值入口。
+- NVS
+  - 板上运行时覆盖，由 `app_config_service` 持久化。
 
-不要把 `sdkconfig` 当成唯一真相，它只是当前机器的即时状态。
+不要把 `sdkconfig` 中的本机值复制到 `sdkconfig.defaults` 或文档。
 
-## 当前持久基线
+## 固件基线
 
-`sdkconfig.defaults` 当前表达的关键方向包括：
+`sdkconfig.defaults` 当前表达的关键硬约束：
 
 - `CONFIG_IDF_TARGET="esp32p4"`
 - `CONFIG_ESPTOOLPY_FLASHSIZE="32MB"`
+- `CONFIG_PARTITION_TABLE_CUSTOM=y`
 - `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_32mb_singleapp.csv"`
 - `CONFIG_SPIRAM=y`
 - `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
@@ -32,146 +33,157 @@
 - `CONFIG_LV_USE_CLIB_MALLOC=y`
 - `CONFIG_LV_USE_TINY_TTF=y`
 
-这几项共同定义了当前工程的硬约束：Hosted 无线、`PSRAM`、大字体与自定义分区表。
+这些配置共同定义：
+
+- `ESP32-P4` target。
+- `32MB` flash。
+- 自定义单应用分区表。
+- `PSRAM`。
+- Hosted Wi-Fi Remote。
+- LVGL TinyTTF 和 CLIB allocator。
+
+## 分区表
+
+当前分区表：
+
+- `partitions_32mb_singleapp.csv`
+
+用途：
+
+- `nvs`
+- `phy_init`
+- 单个较大的 `factory` app 分区
+
+这是当前阶段的单应用路线。后续如果引入 OTA、大型图片资源、日志缓存或更大的字体资产，需要重新审查分区策略。
 
 ## 运行时配置模型
 
-当前统一配置结构由 `components/app_config_service/include/app_config_service.h` 维护，至少包含这些域：
+配置结构定义在：
 
-### Wi-Fi
+- `components/app_config_service/include/app_config_service.h`
 
-- `ssid`
-- `password`
-- `hostname`
-- `security`
-- `eap_identity`
-- `eap_username`
-- `eap_password`
-- `portal_enabled`
-- `portal_url`
-- `portal_username`
-- `portal_password`
+持久化实现位于：
 
-### 配置热点
+- `components/app_config_service/app_config_service.c`
 
-- `enabled`
-- `ssid`
-- `password`
+当前 `app_config_t` 包括：
 
-### Provider
-
-- `kind`
-- `display_name`
-- `base_url`
-- `endpoint_path`
-- `access_token`
-- `management_key`
-- `user_header_name`
-- `user_header_value`
-- `refresh_interval_ms`
-
-### UI
-
+- `wifi`
+  - `ssid`
+  - `password`
+  - `hostname`
+  - `security`
+  - `eap_identity`
+  - `eap_username`
+  - `eap_password`
+  - `portal_enabled`
+  - `portal_url`
+  - `portal_username`
+  - `portal_password`
+- `config_ap`
+  - `enabled`
+  - `ssid`
+  - `password`
+- `provider`
+  - `kind`
+  - `display_name`
+  - `base_url`
+  - `endpoint_path`
+  - `access_token`
+  - `management_key`
+  - `user_header_name`
+  - `user_header_value`
+  - `refresh_interval_ms`
 - `ui_refresh_interval_ms`
 
-## Kconfig 默认值入口
+## Kconfig 默认值
 
-`components/app_config_service/Kconfig.projbuild` 当前暴露了多类首启动默认值：
+应用级 Kconfig 默认值在：
 
-- Wi-Fi 基本信息
-- 企业认证字段
-- 门户元数据
-- 配置热点参数
-- provider 名称、端点和凭据字段
-- UI 刷新周期
+- `components/app_config_service/Kconfig.projbuild`
 
-这些默认值用于首次启动或 NVS 中还没有有效覆盖值时的配置装配。
+关键配置域：
 
-## 本地配置 API 暴露的配置字段
+- Wi-Fi 接入参数。
+- 企业认证参数。
+- 门户 URL 和门户账号字段。
+- fallback 配置 AP。
+- provider endpoint、token、management key 和用户头。
+- provider 刷新周期。
+- UI 刷新周期。
 
-`GET /api/config` 当前返回这些配置字段：
+默认值可以用于 bring-up，但不应保存真实凭据。
 
-| Field | Description |
-|-------|-------------|
-| `wifi_ssid` | Wi-Fi SSID |
-| `wifi_password` | Wi-Fi 密码 |
-| `wifi_hostname` | 设备主机名 |
-| `wifi_security` | `open` / `wpa2-psk` / `wpa2-enterprise` |
-| `wifi_eap_identity` | Enterprise identity |
-| `wifi_eap_username` | Enterprise username |
-| `wifi_eap_password` | Enterprise password |
-| `wifi_portal_enabled` | 是否需要门户 / OA 注册 |
-| `wifi_portal_url` | 门户 URL |
-| `wifi_portal_username` | 门户用户名 |
-| `wifi_portal_password` | 门户密码 |
-| `config_ap_enabled` | 是否启用 fallback 配置热点 |
-| `config_ap_ssid` | 配置热点 SSID |
-| `config_ap_password` | 配置热点密码 |
-| `provider_kind` | 当前 provider 类型 |
-| `provider_display_name` | provider 展示名 |
-| `provider_base_url` | provider 基础 URL |
-| `provider_endpoint_path` | provider 路径 |
-| `provider_access_token` | provider access token |
-| `provider_management_key` | provider management key |
-| `provider_user_header_name` | 自定义用户头名 |
-| `provider_user_header_value` | 自定义用户头值 |
-| `provider_refresh_interval_ms` | provider 刷新周期 |
-| `ui_refresh_interval_ms` | UI 刷新周期 |
+## 本地配置 API
 
-## 运行时修改入口
+配置网页和 API 由：
 
-当前推荐通过本地配置网页修改运行时参数。配置网页会：
+- `components/config_web_service/config_web_service.c`
 
-- 读取当前配置快照
-- 对用户输入做统一校验
-- 把合法配置写回 `NVS`
-- 提示用户在需要时重启设备以应用网络或 provider 变化
+提供的配置相关接口：
 
-这比直接改 `sdkconfig` 更符合当前产品形态。
+- `GET /api/config`
+  - 返回当前运行时配置。
+- `POST /api/config`
+  - 接收表单参数，校验后写入 NVS，并调度重启。
+- `GET /api/status`
+  - 返回网络、门户和 provider 状态摘要。
+- `POST /api/portal/complete`
+  - 标记门户流程完成。
+- `POST /api/restart`
+  - 请求设备重启。
 
-## 必填与可选项
+门户相关接口：
 
-当前仓库没有单独的环境变量文件，运行时可用性主要取决于配置组合是否完整：
+- `GET /portal/open`
+- `ANY /portal/proxy*`
+- `GET /*`
 
-- Wi-Fi 连接至少需要能形成有效接入组合
-- `WPA2-Enterprise` 路径需要对应的 EAP 字段
-- provider 轮询至少依赖：
-  - `provider_kind`
-  - `provider_base_url`
-  - `provider_access_token`
-  - `provider_user_header_value`
+## 配置 AP
 
-如果配置不满足约束，保存阶段会由 `app_config_validate()` 拦截。
+配置 AP 由 `network_service` 管理，入口包括：
 
-## 敏感信息处理
+- 无有效 Wi-Fi 配置时的 fallback 行为。
+- `board_input_service` 监听到 BOOT 按钮长按后的配置入口。
 
-当前配置模型已经包含多类敏感字段：
+当前 BOOT 按钮路径：
 
-- Wi-Fi 密码
-- EAP 用户名 / 密码
-- 门户用户名 / 密码
-- provider token
-- provider management key
-- provider 用户头值
+- GPIO 35。
+- 约 2 秒长按。
+- 短按忽略。
 
-因此必须坚持：
+## 敏感信息
 
-- 不在文档里写实际值
-- 不把本机敏感项复制进 `sdkconfig.defaults`
-- 审查 `sdkconfig`、日志和网页返回值时优先检查是否泄露
-- 不在仓库文档中固化当前用户目录、agent 主目录、本机 Python 虚拟环境路径或固定串口号
+敏感字段：
 
-## 配置变更后的推荐动作
+- Wi-Fi 密码。
+- 企业认证身份、用户名、密码。
+- 门户用户名、密码。
+- provider access token。
+- provider management key。
+- provider user header value。
 
-涉及这些内容时，建议动作顺序是：
+处理规则：
 
-1. 审查 `sdkconfig.defaults`
-2. 运行 `idf.py reconfigure`
-3. 运行 `idf.py build`
-4. 如涉及显示或网络关键路径，上板验证
+- `sdkconfig` 不提交。
+- 文档不记录真实值。
+- 日志不输出凭据和 token。
+- 生成文档和提交 diff 必须做 secret scan。
+- 后续生产化前应评估 `/api/config` 的 secret readback 脱敏。
 
-如果改动的是运行时配置模型或配置网页，则还应验证：
+## 修改配置后的动作
 
-- 页面读写是否正常
-- 保存后的校验行为是否正确
-- 重启后配置是否按预期恢复
+修改 `sdkconfig.defaults`、分区、Hosted、Wi-Fi Remote、PSRAM、LVGL 或 Kconfig 默认值后，推荐顺序：
+
+1. 审查 diff，确认没有私有值。
+2. 通过 MCP 或 CLI 运行 `reconfigure`。
+3. 运行 `build`。
+4. 涉及显示、网络、provider 或 BOOT 按钮时，上板验证。
+
+CLI 回退命令：
+
+```powershell
+idf.py -C "E:\esp32_ai_monitor" reconfigure
+idf.py -C "E:\esp32_ai_monitor" build
+idf.py -C "E:\esp32_ai_monitor" -p <PORT> flash monitor
+```

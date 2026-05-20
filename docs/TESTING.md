@@ -3,120 +3,191 @@
 
 ## 当前验证现实
 
-当前仓库没有这些自动化护栏：
+当前仓库没有自动化测试套件或 CI。未检测到：
 
-- 单元测试
-- 集成测试
-- 组件测试
-- CI
-- `.github/workflows/`
+- `tests/`
+- `test/`
+- Unity 组件测试。
+- GitHub Actions 或其他 CI 工作流。
+- provider fixture backend。
 
-因此当前验证模式不是“跑测试套件”，而是：
+因此验证主要依赖：
 
-1. 刷新生成态
-2. 构建固件
-3. 如涉及显示、网络、provider 或配置网页，必须上板验证
+- 文档与源码事实核对。
+- `reconfigure`。
+- `build`。
+- 上板 `flash monitor`。
+- 手工检查 UI、网络、provider 和本地配置门户。
 
-## 基本验证命令
+## MCP 优先路径
 
-### 刷新配置与依赖
+ESP-IDF 工程动作优先使用 MCP。
+
+先读取：
+
+- `project://config`
+- `project://status`
+- `project://devices`
+
+确认：
+
+- 项目根目录。
+- `idf_version`。
+- target。
+- build 目录。
+- 串口候选。
+
+再执行 build 或 flash。看到 MCP 动作很快返回时，先读 `project://status` 的 operation 状态，不要误判为未执行。
+
+## CLI 回退路径
+
+MCP 不可用、transport 失效或工具无法完成时，使用 CLI：
 
 ```powershell
-idf.py reconfigure
+idf.py -C "E:\esp32_ai_monitor" reconfigure
+idf.py -C "E:\esp32_ai_monitor" build
+idf.py -C "E:\esp32_ai_monitor" -p <PORT> flash monitor
 ```
 
-### 构建
+回退时需要记录原因和验证结果。
+
+## 按变更类型验证
+
+### 文档-only
+
+最低检查：
 
 ```powershell
-idf.py build
+git diff --check
 ```
 
-### 上板回归
+另需：
+
+- 对照当前源码和 MCP 状态核对事实。
+- 扫描生成文档中的 token、密钥、本机用户路径、Wi-Fi 凭据和日志路径。
+
+### 配置变更
+
+最低检查：
 
 ```powershell
-idf.py -p <PORT> flash monitor
+idf.py -C "E:\esp32_ai_monitor" reconfigure
+idf.py -C "E:\esp32_ai_monitor" build
 ```
 
-## MCP 路径验证
+另需：
 
-如果当前会话接入了 `ESP-IDF MCP`，最小验证顺序是：
+- 审查 `sdkconfig.defaults`。
+- 确认没有把本机 `sdkconfig` 私有值提交。
 
-1. 读 `project://config`
-2. 读 `project://status`
-3. 如需烧录，再读 `project://devices`
-4. 触发 `build` 或 `flash`
-5. 再读一次 `project://status`
+### UI / 显示变更
 
-要确认的重点是：
+最低检查：
 
-- `target`
-- `idf_version`
-- `build_dir`
-- `operation.status`
-- `exit_code`
-- `log_tail`
+- build。
+- flash。
+- 观察主监控屏。
+- 检查是否出现首帧复位。
+- 检查字体、刷新和状态文本。
 
-## 按模块的手工验证点
+重点关注：
+
+- `PSRAM`。
+- `CONFIG_LV_USE_CLIB_MALLOC=y`。
+- `CONFIG_LV_USE_TINY_TTF=y`。
+- 字体资产大小。
+
+### 网络变更
+
+最低检查：
+
+- build。
+- flash。
+- 验证连接状态。
+- 验证 fallback AP。
+- 验证 `/api/status`。
+
+重点关注：
+
+- Hosted / Wi-Fi Remote 配置。
+- WPA2-Enterprise 字段。
+- portal 状态。
+- 断连和重连状态文本。
+
+### Provider 变更
+
+最低检查：
+
+- build。
+- 在网络可用时观察 provider 状态。
+- 检查成功 / 失败计数。
+- 检查 HTTP 状态。
+- 检查 delta 和小时消费显示。
+
+日志中不得输出 token、management key 或完整授权头。
+
+### 配置门户变更
+
+最低检查：
+
+- build。
+- 打开配置页。
+- 调用 `GET /api/config`。
+- 调用 `POST /api/config`。
+- 调用 `GET /api/status`。
+- 保存后确认设备重启和配置生效。
+
+### BOOT 按钮变更
+
+最低检查：
+
+- build。
+- flash。
+- 短按确认不触发配置入口。
+- 长按约 2 秒确认进入配置 AP 路径。
+
+## 模块手工检查点
 
 ### `app_config_service`
 
-- 默认值是否正确装配
-- 运行时保存是否成功
-- 非法输入是否被校验拦截
-- 重置默认值后是否恢复到编译期基线
+- 默认值可装配。
+- NVS 覆盖可读取。
+- 保存前校验能拒绝非法配置。
+- schema 变化不会误读旧 blob。
 
 ### `network_service`
 
-- `STA` / fallback `SoftAP` 路径是否正确
-- 企业认证参数是否生效
-- 门户状态是否能正确推进
-- UI 与配置网页读取到的网络快照是否一致
+- 未配置时状态清晰。
+- 配置正确时能进入 connected。
+- portal required / completed 状态正确。
+- fallback AP 可进入。
 
 ### `provider_service`
 
-- 无凭据时是否进入合理状态
-- 抓取成功 / 失败统计是否更新
-- HTTP 错误能否反映到 `state_text` / `status_text`
-- delta 与小时消费统计是否合理
+- 网络未就绪时不误报成功。
+- 凭据缺失时状态可读。
+- provider 响应解析后快照稳定。
+- 失败时保留可诊断状态文本。
 
 ### `config_web_service`
 
-- `GET /api/config` 读取是否正确
-- `POST /api/config` 校验和保存是否正确
-- `GET /api/status` 是否返回最新运行态
-- `POST /api/portal/complete` 是否能推进门户状态
-- `POST /api/restart` 是否会按预期延迟重启设备
+- JSON 字符串转义正确。
+- 表单解析不会越界。
+- 保存后调度重启。
+- proxy body limit 生效。
 
 ### `ui_service`
 
-- 首帧是否稳定
-- 字体加载是否成功
-- 网络 / provider 状态是否可见
-- 刷新节奏下是否出现抖动或卡顿
-
-## 高风险改动的最低验证要求
-
-以下改动即使编译通过，也不应视为验证完成：
-
-- `sdkconfig.defaults` 变化
-- Hosted / Remote 相关配置变化
-- `PSRAM`、字体、allocator、显示缓冲变化
-- 配置网页字段或接口变化
-- provider 数据模型变化
-
-这些改动都至少要做一次上板回归。
+- 首屏可见。
+- 网络和 provider 状态刷新。
+- 详情视图可读。
+- 字体不触发内存问题。
 
 ## 当前缺口
 
-由于没有自动化测试，当前最大的验证风险是：
-
-- 配置模型变化可能静默破坏保存/恢复逻辑
-- provider 返回格式变化可能静默破坏解析
-- UI、网络、配置网页三套观察面可能发生漂移
-- 文档可能看起来正确，但固件行为并不正确
-
-因此每次声称“完成”前，都要明确说明：
-
-- 做了哪些验证
-- 哪些没有验证
-- 下一步最小验证是什么
+- 缺少自动化单元测试。
+- 缺少 provider response fixtures。
+- 缺少本地 HTTP route 测试。
+- 缺少 UI smoke 测试。
+- 缺少 CI。
+- 缺少自动化 secret scan gate。

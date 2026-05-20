@@ -1,93 +1,147 @@
 <!-- generated-by: gsd-doc-writer -->
-# GETTING-STARTED
+# GETTING STARTED
 
 ## 前置条件
 
-开始前至少需要这些条件：
+- Windows PowerShell 或等价 shell。
+- `ESP-IDF v6.0.1`。
+- `esp32p4` target。
+- `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`。
+- 可用 UART 烧录端口。
+- 优先可用的 ESP-IDF MCP 项目资源。
 
-- `ESP-IDF v6.0.1`
-- 当前 target 为 `esp32p4`
-- 可用的 `idf.py`
-- 一块 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B`
-- 可用串口连接用于烧录与串口监视
+当前仓库默认目标是 `ESP32-P4` 主控和板载 `ESP32-C6` Wi-Fi 协处理链路。不要按 P4 原生 Wi-Fi 项目处理。
 
-如果你在 Codex 会话里工作，优先确认 `ESP-IDF MCP` 可用，并先读：
+## 获取代码
 
-- `project://config`
-- `project://status`
-
-## 安装步骤
-
-1. 克隆仓库：
-
-```bash
+```powershell
 git clone https://github.com/Minghou-Lei/esp32_ai_monitor.git
 cd esp32_ai_monitor
 ```
 
-2. 如改动了依赖、配置基线或分区设置，先刷新构建态：
+## 确认工程事实
+
+优先读取 ESP-IDF MCP：
+
+- `project://config`
+- `project://status`
+- `project://devices`
+
+需要确认：
+
+- `project_path` 指向当前仓库。
+- `idf_version` 是 `v6.0.1`。
+- `target` 是 `esp32p4`。
+- build 目录存在或可生成。
+- 只有在需要烧录时才选择明确串口。
+
+## 首次构建
+
+MCP 可用时优先用 MCP 构建动作。
+
+CLI 回退：
 
 ```powershell
-idf.py reconfigure
+idf.py -C "E:\esp32_ai_monitor" reconfigure
+idf.py -C "E:\esp32_ai_monitor" build
 ```
 
-3. 构建固件：
+构建成功后应生成：
+
+- `build/esp32_ai_monitor.bin`
+
+## 烧录和监控
+
+确认串口后：
 
 ```powershell
-idf.py build
+idf.py -C "E:\esp32_ai_monitor" -p <PORT> flash monitor
 ```
 
-4. 烧录并开始串口监视：
+板上应看到：
+
+- LVGL 主监控屏。
+- 网络状态。
+- provider 状态。
+- 底部或详情状态区。
+
+如果配置未完成，可通过配置 AP 和本地网页修改运行时配置。
+
+## 本地配置
+
+配置入口：
+
+- 长按上方 BOOT 按钮约 2 秒。
+- 连接 fallback 配置 AP。
+- 打开配置网页。
+
+配置网页管理：
+
+- Wi-Fi / 企业认证。
+- 门户 URL 和门户账号字段。
+- provider base URL、endpoint、token、management key、用户头。
+- 刷新周期。
+
+保存配置后设备会调度重启，使 Wi-Fi 和 provider 配置重新生效。
+
+## 常用命令
+
+重新生成配置：
 
 ```powershell
-idf.py -p <PORT> flash monitor
+idf.py -C "E:\esp32_ai_monitor" reconfigure
 ```
 
-## 首次运行
+构建：
 
-成功启动后，应该能观察到：
+```powershell
+idf.py -C "E:\esp32_ai_monitor" build
+```
 
-1. 板上屏幕点亮并进入主监控界面
-2. 串口日志显示各服务启动状态
-3. 设备连上网络后，主屏或本地配置页能看到网络状态
-4. provider 配置完整时，主屏会开始展示 provider 状态与金额信息
+烧录并串口监控：
 
-如果要修改运行时配置，打开设备当前可达 IP 上的本地配置页。
+```powershell
+idf.py -C "E:\esp32_ai_monitor" -p <PORT> flash monitor
+```
 
 ## 常见问题
 
-### 1. 改了 `sdkconfig.defaults` 但行为没变
+### 改了默认配置但行为没变
 
-先执行：
+检查改动是否写入 `sdkconfig.defaults` 或 `components/app_config_service/Kconfig.projbuild`。运行时 NVS 覆盖可能仍在生效，必要时通过配置页重置或保存新值。
 
-```powershell
-idf.py reconfigure
-```
+### 构建通过但 Wi-Fi 不正常
 
-再重新 `build`。仅修改文件但不 `reconfigure`，生成态不会自动同步。
+先确认 Hosted / Wi-Fi Remote 路线没有跑偏：
 
-### 2. 编译过了，但板上显示或联网不正常
+- `CONFIG_ESP_WIFI_REMOTE_ENABLED=y`
+- `CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y`
+- `CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y`
+- `# CONFIG_ESP_HOST_WIFI_ENABLED is not set`
 
-这类改动不能只看编译结果。当前项目没有自动化测试护栏，显示链路、Hosted Wi-Fi 路线和 provider 轮询都需要上板验证。
+不要先按 P4 原生 Wi-Fi 方向修改业务代码。
 
-### 3. MCP 能列出资源，但工程动作看起来没跑
+### 首屏复位或显示异常
 
-当前约定是：
+优先检查：
 
-- `project://status` 是快速状态快照
-- `build_project` / `flash_project` 可以后台执行并立即返回
+- PSRAM 是否启用。
+- `CONFIG_LV_USE_CLIB_MALLOC=y`。
+- `CONFIG_LV_USE_TINY_TTF=y`。
+- 字体资源和 LVGL 首帧内存压力。
 
-因此要以 `project://status` 中的 `operation.status`、`exit_code` 和 `log_tail` 为准，而不是只看工具调用本身是否长时间阻塞。
+### 配置页能打开但保存后没有变化
 
-### 4. 本地配置页能打开，但保存后不生效
+检查：
 
-当前保存逻辑会先走 `app_config_validate()`，而且保存成功后仍可能需要重启设备，尤其是 Wi-Fi 和 provider 相关改动。
+- `POST /api/config` 是否返回成功。
+- 配置是否通过 `app_config_validate()`。
+- 保存后设备是否完成重启。
+- NVS 是否仍保留旧值。
 
 ## 下一步
 
-如果你准备继续开发，接着看：
-
-- [DEVELOPMENT.md](./DEVELOPMENT.md)
-- [CONFIGURATION.md](./CONFIGURATION.md)
-- [ARCHITECTURE.md](./ARCHITECTURE.md)
-- [TESTING.md](./TESTING.md)
+- 阅读 [ARCHITECTURE.md](./ARCHITECTURE.md) 理解组件边界。
+- 阅读 [CONFIGURATION.md](./CONFIGURATION.md) 理解配置分层。
+- 阅读 [API.md](./API.md) 查看本地 HTTP 接口。
+- 阅读 [TESTING.md](./TESTING.md) 选择最小验证路径。

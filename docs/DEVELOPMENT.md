@@ -3,144 +3,168 @@
 
 ## 本地开发原则
 
-当前仓库的开发方向已经不是“单页 Wi-Fi 诊断示例”，而是围绕统一配置模型的板上监控终端。做开发时优先遵守这些原则：
+- 保持 `main/main.c` 很薄。
+- 新功能优先进入 `components/` 下的独立组件。
+- 显示、触摸和背光优先使用 Waveshare BSP。
+- 无线链路按 `ESP-Hosted + esp_wifi_remote` 处理。
+- 运行时配置统一经过 `app_config_service`。
+- 文档和代码都不要固化真实凭据、本机用户目录、日志路径或私有串口假设。
 
-- `main/main.c` 保持轻量，只做启动编排
-- 业务能力优先拆到 `components/`
-- 编译期默认值和运行时覆盖分层
-- UI 优先可读性和稳定性
-- 工程动作优先 `ESP-IDF MCP`，CLI 作为明确回退路径
+## 组件边界
 
-## 何时修改哪个组件
+### `main`
 
-### `components/app_config_service`
+只做启动编排。当前 `app_main()` 启动：
 
-优先在这些场景修改它：
+1. UI
+2. Network
+3. Provider
+4. Config web
+5. Board input
 
-- 新增运行时可配置项
-- 需要统一校验逻辑
-- 需要把 Kconfig 默认值接入运行态
-- 需要新增 NVS 持久化字段
+不要把业务逻辑塞进 `main/main.c`。
 
-### `components/network_service`
+### `app_config_service`
 
-优先在这些场景修改它：
+修改这些内容时进入这里：
 
-- Wi-Fi 接入逻辑变化
-- 企业认证变化
-- 门户状态管理变化
-- fallback `SoftAP` 逻辑变化
-- 网络快照字段变化
+- 配置 schema。
+- Kconfig 默认值。
+- NVS 读写。
+- 配置校验。
+- 字符串与枚举转换。
 
-### `components/provider_service`
+新增配置字段后，同步检查 `config_web_service`、`network_service`、`provider_service` 和文档。
 
-优先在这些场景修改它：
+### `network_service`
 
-- 调整 provider 轮询节奏
-- 新增或扩展 provider 字段
-- 调整 HTTP 请求、错误处理或 delta 统计
-- 增加手动刷新或历史聚合逻辑
+修改这些内容时进入这里：
 
-### `components/config_web_service`
+- STA 连接。
+- WPA2-PSK / WPA2-Enterprise。
+- portal state。
+- fallback 配置 AP。
+- 网络快照字段。
 
-优先在这些场景修改它：
+不要把 Wi-Fi 状态直接写进 UI 或配置网页。
 
-- 新增或修改配置页字段
-- 新增本地 REST 接口
-- 调整保存流程、状态输出或维护动作
+### `provider_service`
 
-### `components/ui_service`
+修改这些内容时进入这里：
 
-优先在这些场景修改它：
+- provider HTTP 请求。
+- provider 响应解析。
+- provider 状态机。
+- delta 和小时统计。
+- 新 provider 类型。
 
-- 主屏布局变化
-- 字体与视觉层级变化
-- 刷新策略变化
-- 新状态字段展示
+当前真实 provider 是 AQI。新增 provider 前应先明确解析和快照兼容策略。
+
+### `config_web_service`
+
+修改这些内容时进入这里：
+
+- 本地配置网页。
+- `/api/config`。
+- `/api/status`。
+- `/api/portal/complete`。
+- `/api/restart`。
+- `/portal/open` 和 `/portal/proxy*`。
+
+注意它目前已经较大，新增复杂逻辑时优先保持局部函数清晰。
+
+### `ui_service`
+
+修改这些内容时进入这里：
+
+- LVGL 页面布局。
+- 主仪表盘显示。
+- 字体和颜色。
+- 网络 / provider 快照呈现。
+- 详情视图和触摸交互。
+
+当前实现文件是 `monitor_dashboard_screen.c`，公开入口仍是 `wifi_info_screen_start()`。
+
+### `board_input_service`
+
+修改这些内容时进入这里：
+
+- BOOT 按钮轮询。
+- 长按阈值。
+- 物理按钮触发的配置 AP 行为。
+
+当前短按被忽略，长按约 2 秒触发配置入口。
 
 ## 常用工程命令
 
-| Command | Description |
-|---------|-------------|
-| `idf.py reconfigure` | 依赖、分区或配置变更后刷新生成态 |
-| `idf.py build` | 构建固件 |
-| `idf.py -p <PORT> flash monitor` | 烧录并串口监视 |
+优先使用 ESP-IDF MCP 完成工程动作。CLI 回退命令：
 
-如果在 Codex 会话里工作，推荐的最小检查顺序是：
+```powershell
+idf.py -C "E:\esp32_ai_monitor" reconfigure
+idf.py -C "E:\esp32_ai_monitor" build
+idf.py -C "E:\esp32_ai_monitor" -p <PORT> flash monitor
+```
 
-1. 读 `project://config`
-2. 读 `project://status`
-3. 如需烧录，再看 `project://devices`
-4. 再执行 `build` / `flash`
-5. 回头读取 `project://status` 确认 `operation` 结果
+修改依赖、分区、`sdkconfig.defaults`、Kconfig 或组件注册后，先 `reconfigure` 再 `build`。
 
-## 代码风格与组织
+## 配置开发流程
 
-当前仓库没有独立的 lint / formatter 配置文件，实际约定来自已有源码：
+新增运行时配置字段：
 
-- C 代码使用四空格缩进
-- 每个组件都维持“小 public API + 多个 static helper”模式
-- 公共类型与函数统一放在 `include/`
-- 文件级静态变量使用 `s_` 前缀
-- 公共枚举和结构体使用 `<component>_<name>_t`
+1. 修改 `components/app_config_service/include/app_config_service.h`。
+2. 修改 `components/app_config_service/Kconfig.projbuild`。
+3. 在 `app_config_service.c` 中设置默认值。
+4. 在 `app_config_validate()` 中增加校验。
+5. 在 `config_web_service.c` 中处理 JSON / 表单读写。
+6. 更新使用该字段的服务。
+7. 更新 `docs/CONFIGURATION.md` 和 `docs/API.md`。
+8. secret scan。
 
-新增代码时优先复制现有组件风格，不做无关格式化。
+敏感字段默认不应出现在日志中。
 
 ## UI 开发约束
 
-当前 UI 已经依赖：
-
-- `PSRAM`
-- `TinyTTF`
-- `LVGL`
-- 多块大字号文本
-
-因此 UI 开发时要特别注意：
-
-- 只在文本变化时更新 label
-- 不要默认小内存池足够
-- 改字体、绘图缓冲或 allocator 时重新评估首帧内存峰值
-- “只是改个显示文案”也可能影响刷新和内存压力
+- 统一使用 LVGL。
+- 优先保持可读性、状态清晰和刷新稳定。
+- 使用 snapshot 数据，不直接访问网络或 provider 内部状态。
+- 改字体、图片、布局缓冲或 allocator 后必须考虑 PSRAM 和首帧内存压力。
+- 显示链路变更需要上板验证。
 
 ## 网络开发约束
 
-当前无线链路不是普通本地 Wi-Fi 直驱，而是 Hosted / Remote 路线。因此：
+- 不按 P4 原生 Wi-Fi 假设开发。
+- Hosted / Wi-Fi Remote 是当前无线主线。
+- 企业认证、portal、fallback AP 状态都属于 `network_service`。
+- `network_service_snapshot_t` 是对 UI 和 Web 层的公开状态面。
 
-- 不打开 `CONFIG_ESP_HOST_WIFI_ENABLED`
-- 不按原生片上 Wi-Fi 心智模型推断所有网络问题
-- 遇到接入异常时先检查 Hosted / Remote 配置组合
+## Provider 开发约束
 
-## 配置开发约束
-
-当前项目采用“编译期默认值 + 运行时覆盖”的模式。新增配置项时优先遵守这条流程：
-
-1. 在 `components/app_config_service/Kconfig.projbuild` 增加默认值
-2. 在 `app_config_service` 中加入字段、默认值装配和校验
-3. 在 `config_web_service` 中暴露运行时入口
-4. 按需在 UI / 网络 / provider 中消费该字段
-
-## 分支与提交流程
-
-当前仓库没有在仓内文档中声明分支命名约定，也没有 `.github/PULL_REQUEST_TEMPLATE.md`。因此更安全的做法是：
-
-- 保持单次改动聚焦
-- 只提交请求范围内的文件
-- 提交信息直接描述这次变更意图
-- 在提交前审查文档、`sdkconfig` 和日志材料里是否混入敏感信息
-
-## PR / 评审关注点
-
-当前评审时优先看这些点：
-
-- 是否误把本机凭据或绝对路径写入文档
-- 是否把运行时配置模型拆散到了多个组件
-- 是否引入了更多 `network_service` / `provider_service` 耦合
-- 是否只做了编译验证却没有说明上板验证缺口
+- 当前 provider polling 是 HTTP。
+- 先保持 HTTP polling 可抓包、可复现、可诊断。
+- 新 provider 不应破坏现有 AQI 快照字段。
+- provider token、management key、用户头值都按敏感信息处理。
 
 ## 文档同步要求
 
-当前仓库已经把 `README.md`、`docs/*.md` 和 `.planning/codebase/*.md` 当作长期可消费文档。涉及这些区域的改动时：
+这些变更必须同步文档：
 
-- 以当前工作树事实为准
-- 不沿用过时“Wi-Fi 详情页原型”描述
-- 不写本机绝对路径、串口号、用户名、Python 虚拟环境路径或 agent 主目录细节
+- 启动顺序变化。
+- 新组件或组件职责变化。
+- 新 REST 路由。
+- 新运行时配置字段。
+- `sdkconfig.defaults`、分区、Hosted、PSRAM、LVGL 相关变化。
+- 验证路径变化。
+
+GSD 代码库映射文件在 `.planning/codebase/`。
+
+## 提交流程
+
+提交前最低检查：
+
+- `git status --short`
+- `git diff --check`
+- secret scan 生成文档和 staged diff
+- 只 stage 本次相关文件
+- 不 stage `sdkconfig`、日志、构建目录、`managed_components/` 或本机临时文件
+
+文档-only 变更不需要用固件构建代替文档事实核对；代码或配置变更必须运行对应构建和上板验证。

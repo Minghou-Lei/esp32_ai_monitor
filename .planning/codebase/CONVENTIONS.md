@@ -1,101 +1,124 @@
+---
+last_mapped_commit: ecd37fb43f75
+refreshed: 2026-05-20
+---
+
 # Coding Conventions
 
-**Analysis Date:** 2026-05-17
+## Language Style
 
-## Naming Patterns
+- C source uses ESP-IDF-style `esp_err_t` returns for fallible public operations.
+- Boolean state uses `bool` from `<stdbool.h>`.
+- Fixed-width counters and timestamps use `<stdint.h>` types.
+- Public headers are wrapped for C++ consumers with `extern "C"`.
 
-**Files:**
-- C source and header files use lowercase snake case, typically matching the component name: `app_config_service.c`, `network_service.h`
-- UI files may preserve legacy names while implementation meaning evolves, for example `include/wifi_info_screen.h` alongside `monitor_dashboard_screen.c`
+## Naming
 
-**Functions:**
-- Public component APIs are prefixed with the component name: `network_service_start()`, `provider_service_request_refresh()`, `config_web_service_start()`
-- Internal helpers are `static` and keep the same prefix, e.g. `network_service_refresh_runtime_fields_locked()`
+Public APIs use component prefixes:
 
-**Variables:**
-- File-scope statics use `s_` prefixes, such as `s_snapshot`, `s_state_lock`, and `s_server`
-- Constants use full uppercase snake case, for example `CONFIG_WEB_SERVICE_BODY_LIMIT`
+- `app_config_load()`
+- `app_config_save()`
+- `network_service_start()`
+- `network_service_get_snapshot()`
+- `provider_service_get_snapshot()`
+- `config_web_service_start()`
+- `board_input_service_start()`
+- `wifi_info_screen_start()`
 
-**Types:**
-- Public structs and enums use `<component>_<concept>_t` naming, such as `app_config_t`, `network_service_snapshot_t`, and `provider_service_state_t`
+Static helpers generally keep the component prefix:
 
-## Code Style
+- `network_service_copy_text()`
+- `provider_service_publish_snapshot()`
+- `config_web_service_write_json_status()`
+- `wifi_info_screen_build_details_text()`
 
-**Formatting:**
-- No formatter config files detected
-- Current style is ESP-IDF-flavored C with four-space indentation and opening brace on the same line
+## File Organization
 
-**Linting:**
-- No repository-local lint config detected
-- Style consistency is enforced manually through the existing component patterns
+Each project component follows the ESP-IDF component pattern:
 
-## Import / Include Organization
+```text
+components/<name>/
+├─ CMakeLists.txt
+├─ include/<name>.h
+└─ <name>.c
+```
 
-**Order:**
-1. Component’s own public header, e.g. `#include "provider_service.h"`
-2. C standard library headers
-3. ESP-IDF / FreeRTOS headers
-4. Peer component headers
+Exceptions:
 
-**Path Aliases:**
-- No path alias system detected
-- Includes use direct component headers made visible through `INCLUDE_DIRS "include"`
+- `app_config_service` also owns `Kconfig.projbuild`.
+- `ui_service` owns assets under `components/ui_service/assets/`.
+- Vendor/BSP override components mirror upstream component layout.
 
 ## Error Handling
 
-**Patterns:**
-- Return `esp_err_t` from public operations that can fail
-- Use `ESP_RETURN_ON_ERROR` and `ESP_GOTO_ON_FALSE` style guard macros in implementation files where applicable
-- Convert background/runtime failures into human-readable status strings for UI and HTTP consumers instead of aborting the firmware
+Common patterns:
+
+- Use `ESP_RETURN_ON_ERROR()` for immediate propagation.
+- Log service start failures in `main/main.c` without preventing later services from attempting startup.
+- Validate pointers and buffer sizes before writing formatted strings.
+- Return `ESP_ERR_INVALID_ARG` for invalid input and `ESP_ERR_NO_MEM` for failed allocation.
+
+Guidance:
+
+- Keep recoverable configuration validation errors explicit and user-readable.
+- Do not swallow `esp_err_t` from ESP-IDF calls in new code.
+- If a service can be called twice, follow the existing idempotent start pattern where practical.
+
+## Resource Management
+
+Existing code uses deterministic cleanup patterns:
+
+- `free()` after allocated response buffers.
+- ESP-IDF handles are kept in static service state.
+- Timer handles are service-owned.
+- HTTP server handles are static and guarded against duplicate start.
+
+For new code:
+
+- Release heap allocations on every error path.
+- Keep ESP-IDF handles owned by the component that creates them.
+- Avoid returning pointers to mutable static state; expose snapshots by copy.
+
+## Snapshot Pattern
+
+Runtime cross-component state is exposed through pull-based snapshots:
+
+- `network_service_snapshot_t`
+- `provider_service_snapshot_t`
+
+The UI and web layer should read snapshots instead of reaching into service internals.
+
+## Configuration Pattern
+
+The required order for new runtime configuration fields is:
+
+1. Add field to `app_config_t`.
+2. Add Kconfig default in `components/app_config_service/Kconfig.projbuild` if build-time default is needed.
+3. Populate defaults in `app_config_service.c`.
+4. Validate field in `app_config_validate()`.
+5. Expose or mask it through `config_web_service.c` as appropriate.
+6. Update docs and secret-scan the result.
+
+## UI Pattern
+
+- UI code is LVGL-based and currently centralized in `components/ui_service/monitor_dashboard_screen.c`.
+- Text update helpers avoid unnecessary LVGL label rewrites.
+- Network and provider data should flow in through snapshots.
+- The board-local web config page is not the on-device LVGL config view.
 
 ## Logging
 
-**Framework:** `ESP_LOG*`
-
-**Patterns:**
-- Each implementation file defines a `static const char *TAG`
-- Startup failures are logged from `main/main.c`, while service-specific operational issues are localized to the owning component
+- Component logs use static `TAG` constants.
+- Startup failures are logged with `esp_err_to_name(err)`.
+- New logs must not print credentials, tokens, cookies, or full provider authorization headers.
 
 ## Comments
 
-**When to Comment:**
-- Public headers and source files typically begin with file-level block comments
-- Brief notes are used where the code is non-obvious, such as server time handling in `provider_service_fetch_once()`
+Existing comments are mostly file-level and interface-level Chinese comments. New comments should explain:
 
-**API Comments:**
-- Public headers in `components/*/include/*.h` carry concise Doxygen-style comments for exported types and functions
+- component responsibility,
+- invariants,
+- hardware constraints,
+- non-obvious ESP-IDF behavior.
 
-## Function Design
-
-**Size:**
-- Service implementation files are intentionally large and self-contained
-- Logic is still decomposed into prefixed static helper functions instead of pushing everything into one giant public function
-
-**Parameters:**
-- Output buffers are usually passed as `(char *dst, size_t dst_size, ...)`
-- Snapshot copy APIs use explicit out-parameters, such as `network_service_get_snapshot(network_service_snapshot_t *out)`
-
-**Return Values:**
-- Public start/save/reset functions return `esp_err_t`
-- Getter functions that cannot meaningfully fail expose `void` and fill caller-provided structs
-
-## Module Design
-
-**Exports:**
-- Public surface area is small and header-driven
-- Each component exposes only a few lifecycle and snapshot APIs through `include/`
-
-**Barrel Files:**
-- Not used
-- Component boundaries are managed by ESP-IDF component registration and direct header inclusion
-
-## Prescriptive Rules to Follow
-
-- Put new runtime capabilities in their own `components/<name>/` directory instead of expanding `main/main.c`
-- Reuse the `app_config_t` model for any new operator-editable setting rather than inventing service-local config stores
-- Expose UI-consumable runtime state through snapshot structs instead of direct UI callbacks from service code
-- Match the existing ESP-IDF error-return style and logging conventions when adding or changing service code
-
----
-
-*Convention analysis: 2026-05-17*
+Do not add process notes, implementation diary text, or TODOs without owner/tracking context.

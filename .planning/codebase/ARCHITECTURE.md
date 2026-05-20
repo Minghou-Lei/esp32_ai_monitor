@@ -1,207 +1,201 @@
-<!-- refreshed: 2026-05-17 -->
-# Architecture
+---
+last_mapped_commit: ecd37fb43f75
+refreshed: 2026-05-20
+---
 
-**Analysis Date:** 2026-05-17
+# Architecture
 
 ## System Overview
 
-当前系统是一个基于 `ESP-IDF` 的嵌入式监控终端，采用“薄入口 + 组件化服务 + 共享快照”的分层结构。输入主要来自板上配置网页、Wi-Fi / 企业网状态、远端 provider HTTP 响应和定时器事件；输出主要是 LVGL 主监控屏、板上配置 API 响应以及串口日志。
+This repository is an ESP-IDF firmware project for a board-local AI / provider monitoring terminal. The current implementation is no longer just a Wi-Fi diagnostics bring-up. It now has:
+
+- a BSP + LVGL dashboard,
+- an NVS-backed runtime configuration model,
+- Wi-Fi / enterprise / portal / fallback AP state management,
+- remote provider polling,
+- a board-local web configuration portal,
+- a physical BOOT-button entry path for the config AP.
+
+The product boundary is still embedded-terminal first: the board displays and controls monitoring state, while heavier AI or provider systems remain external.
+
+## Boot Flow
+
+`main/main.c` is intentionally thin. Current `app_main()` starts services in this order:
+
+1. `wifi_info_screen_start()`
+2. `network_service_start()`
+3. `provider_service_start()`
+4. `config_web_service_start()`
+5. `board_input_service_start()`
+
+This ordering gives the user immediate display feedback, then brings up network state, provider state, web configuration, and finally physical input monitoring.
+
+## Component Graph
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                    Runtime Entry Layer                      │
-├─────────────────────────────────────────────────────────────┤
-│ `main/main.c`                                               │
-│ app_main() starts UI, network, provider, and config web    │
-└──────────────┬───────────────────┬──────────────────────────┘
-               │                   │
-               ▼                   ▼
-┌──────────────────────────┐  ┌──────────────────────────────┐
-│   Shared Config Layer    │  │   Local Interaction Layer    │
-│ `components/app_config_  │  │ `components/ui_service/`     │
-│  service/`               │  │ `components/config_web_      │
-│                          │  │  service/`                   │
-└──────────────┬───────────┘  └──────────────┬───────────────┘
-               │                              │
-               ▼                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Runtime Service Layer                          │
-│ `components/network_service/`                                │
-│ `components/provider_service/`                               │
-└──────────────┬──────────────────────────────┬───────────────┘
-               │                              │
-               ▼                              ▼
-┌──────────────────────────┐  ┌──────────────────────────────┐
-│   Board / IDF Backends   │  │     External Provider API    │
-│ ESP-Hosted, esp_wifi_    │  │ Configured HTTPS endpoint    │
-│ remote, BSP, LVGL, NVS   │  │ polled via esp_http_client   │
-└──────────────────────────┘  └──────────────────────────────┘
+app_main()
+  ├─ wifi_info_screen_start()
+  ├─ network_service_start()
+  ├─ provider_service_start()
+  ├─ config_web_service_start()
+  └─ board_input_service_start()
+
+app_config_service
+  ├─ network_service
+  ├─ provider_service
+  ├─ config_web_service
+  └─ ui_service
+
+network_service ── snapshot ──► ui_service
+provider_service ─ snapshot ──► ui_service
+network_service ── snapshot ──► config_web_service
+provider_service ─ snapshot ──► config_web_service
+board_input_service ─ command ─► network_service
 ```
-
-## Component Responsibilities
-
-| Component | Responsibility | File |
-|-----------|----------------|------|
-| Entry orchestration | Start UI, network, provider, and config web services | `main/main.c` |
-| Shared runtime config | Load defaults, validate edits, and persist runtime overrides to NVS | `components/app_config_service/app_config_service.c` |
-| Network state machine | Drive STA / fallback AP behavior and expose a normalized network snapshot | `components/network_service/network_service.c` |
-| Provider polling | Fetch remote provider data and publish a normalized provider snapshot | `components/provider_service/provider_service.c` |
-| Local config portal | Serve HTML + REST endpoints for runtime configuration and maintenance actions | `components/config_web_service/config_web_service.c` |
-| Board UI | Render the dashboard with BSP + LVGL + TinyTTF | `components/ui_service/monitor_dashboard_screen.c` |
-
-## Pattern Overview
-
-**Overall:** service-oriented embedded runtime with shared snapshot structs
-
-**Key Characteristics:**
-- `app_main()` is orchestration-only and delegates behavior to components
-- Runtime services communicate primarily through pull-based snapshot accessors rather than direct UI callbacks
-- Configuration is centralized in one model (`app_config_t`) and consumed by all runtime services
 
 ## Layers
 
-**Entry Layer:**
-- Purpose: define boot ordering and error logging
+### Entry Layer
+
 - Location: `main/main.c`
-- Contains: `app_main()` and service start calls
-- Depends on: all runtime services
-- Used by: ESP-IDF startup runtime
+- Responsibility: service startup orchestration and fatal start error logging.
+- Constraint: do not move business logic into `app_main()`.
 
-**Configuration Layer:**
-- Purpose: own the canonical runtime configuration model
-- Location: `components/app_config_service/`
-- Contains: default assembly, validation, NVS save/reset, string conversion helpers
-- Depends on: `nvs_flash` and `sdkconfig`
-- Used by: `network_service`, `provider_service`, `config_web_service`, and indirectly the UI
+### Configuration Layer
 
-**Network Layer:**
-- Purpose: manage Wi-Fi join path, enterprise config, portal gating, and fallback AP exposure
-- Location: `components/network_service/`
-- Contains: state machine, event handlers, snapshot refresh, portal state transitions
-- Depends on: `app_config_service`, `esp_event`, `esp_netif`, `esp_wifi`, `lwip`, and `wpa_supplicant`
-- Used by: `provider_service`, `config_web_service`, and `ui_service`
+- Location: `components/app_config_service`
+- Public API: `components/app_config_service/include/app_config_service.h`
+- Responsibility:
+  - assemble defaults from `sdkconfig`,
+  - load and save NVS overrides,
+  - validate runtime configuration,
+  - convert Wi-Fi security and provider enums to and from strings.
 
-**Provider Layer:**
-- Purpose: poll the configured remote provider and normalize provider/account data into UI-ready fields
-- Location: `components/provider_service/`
-- Contains: HTTP request logic, lightweight parsing, delta/hourly tracking, refresh task
-- Depends on: `app_config_service`, `esp_http_client`, `esp_timer`, `mbedtls`, and `network_service`
-- Used by: `config_web_service` and `ui_service`
+`app_config_t` is the central runtime contract. It contains:
 
-**Interaction Layer:**
-- Purpose: provide operator-facing UI and board-local configuration entry
-- Location: `components/ui_service/` and `components/config_web_service/`
-- Contains: LVGL screen tree, periodic refresh timer, HTML portal, REST handlers, reboot hook
-- Depends on: snapshots from `network_service` and `provider_service`
-- Used by: human operator on-device or over the local network
+- `wifi`: SSID, password, hostname, security mode, enterprise identity, portal metadata.
+- `config_ap`: fallback AP enabled flag, SSID, password.
+- `provider`: kind, display name, base URL, endpoint path, access token, management key, user header, refresh interval.
+- `ui_refresh_interval_ms`.
 
-## Data Flow
+### Network Layer
 
-### Primary Boot Path
+- Location: `components/network_service`
+- Public API: `components/network_service/include/network_service.h`
+- Responsibility:
+  - initialize NVS, event loop, netif, and Wi-Fi runtime,
+  - manage STA and APSTA fallback modes,
+  - apply WPA2-PSK or WPA2-Enterprise settings,
+  - maintain portal state,
+  - expose a `network_service_snapshot_t`.
 
-1. `app_main()` starts all runtime services in order (`main/main.c:10`)
-2. `wifi_info_screen_start()` initializes the display and screen tree (`components/ui_service/monitor_dashboard_screen.c:958`)
-3. `network_service_start()` initializes NVS, event loop, netif, and Wi-Fi runtime (`components/network_service/network_service.c:489`)
-4. `provider_service_start()` spawns the polling task (`components/provider_service/provider_service.c:947`)
-5. `config_web_service_start()` binds the board-local HTTP routes (`components/config_web_service/config_web_service.c:429`)
+The snapshot includes connection readiness, SoftAP state, portal state, RSSI, channel, SSID, MAC addresses, IP data, DNS data, portal URL, and cipher/auth text.
+
+### Provider Layer
+
+- Location: `components/provider_service`
+- Public API: `components/provider_service/include/provider_service.h`
+- Responsibility:
+  - poll configured external provider over HTTP,
+  - normalize account/subscription data into two display items,
+  - track fetch counts, failures, HTTP status, delta usage, and hourly amount.
+
+The current provider enum exposes `APP_CONFIG_PROVIDER_AQI`. The API shape is more generic than the current implementation.
+
+### Local Web Layer
+
+- Location: `components/config_web_service`
+- Public API: `components/config_web_service/include/config_web_service.h`
+- Responsibility:
+  - serve the embedded configuration page,
+  - expose configuration and status REST endpoints,
+  - proxy captive portal traffic when configured,
+  - schedule device restart after saved configuration changes.
+
+Current route surface:
+
+- `GET /api/config`
+- `POST /api/config`
+- `GET /api/status`
+- `POST /api/portal/complete`
+- `POST /api/restart`
+- `GET /portal/open`
+- `ANY /portal/proxy*`
+- `GET /*`
+
+### UI Layer
+
+- Location: `components/ui_service`
+- Public API: `components/ui_service/include/wifi_info_screen.h`
+- Main implementation: `components/ui_service/monitor_dashboard_screen.c`
+- Responsibility:
+  - initialize the BSP display and LVGL tree,
+  - load embedded TinyTTF font asset,
+  - render the AQI/provider dashboard,
+  - periodically refresh network and provider snapshots,
+  - expose diagnostic detail views through the on-device UI.
+
+The public function name remains `wifi_info_screen_start()` even though the implementation has moved to the monitor dashboard concept.
+
+### Physical Input Layer
+
+- Location: `components/board_input_service`
+- Public API: `components/board_input_service/include/board_input_service.h`
+- Responsibility:
+  - poll the upper BOOT button,
+  - detect a long press,
+  - request configuration AP entry through `network_service`.
+
+Current constants in implementation use GPIO 35, 50 ms polling, and a 2 second long-press threshold.
+
+## Data Flows
 
 ### Runtime Configuration Flow
 
-1. `GET /api/config` serializes the current runtime config (`components/config_web_service/config_web_service.c:190`)
-2. `POST /api/config` decodes form data and rewrites `app_config_t` (`components/config_web_service/config_web_service.c:309`)
-3. `app_config_validate()` enforces field constraints (`components/app_config_service/app_config_service.c:139`)
-4. `app_config_save()` persists the blob to NVS (`components/app_config_service/app_config_service.c:274`)
-5. Services pick up refreshed config on their next read or restart cycle
+```text
+Kconfig defaults
+  └─ app_config_load()
+       ├─ NVS override if valid
+       └─ app_config_t snapshot
+            ├─ network_service
+            ├─ provider_service
+            ├─ config_web_service
+            └─ ui_service
+```
 
 ### Provider Refresh Flow
 
-1. `provider_service_poll_task()` loops forever with task notifications and refresh delay (`components/provider_service/provider_service.c:931`)
-2. `provider_service_fetch_once()` rebuilds request config from the latest `app_config_t`
-3. `esp_http_client` performs the HTTPS GET and captures headers/body (`components/provider_service/provider_service.c`)
-4. Parsed values are folded into `provider_service_snapshot_t`
-5. UI and config API pull the latest snapshot through `provider_service_get_snapshot()` (`components/provider_service/provider_service.c:980`)
+```text
+provider_service task
+  ├─ reads app_config_t
+  ├─ waits for network readiness
+  ├─ performs HTTP request
+  ├─ parses provider response
+  └─ publishes provider_service_snapshot_t
+```
 
-**State Management:**
-- Shared mutable state is held in module-level static structs guarded by FreeRTOS semaphores in `network_service` and `provider_service`
-- UI and HTTP handlers are consumers that request snapshot copies, not owners of the underlying state
+### Config Save Flow
 
-## Key Abstractions
-
-**`app_config_t`:**
-- Purpose: single runtime configuration contract
-- Examples: `components/app_config_service/include/app_config_service.h`
-- Pattern: centralized configuration object shared by services
-
-**`network_service_snapshot_t`:**
-- Purpose: normalized network/portal status surface for UI and HTTP
-- Examples: `components/network_service/include/network_service.h`
-- Pattern: pull-based snapshot DTO
-
-**`provider_service_snapshot_t`:**
-- Purpose: normalized remote provider state surface
-- Examples: `components/provider_service/include/provider_service.h`
-- Pattern: pull-based snapshot DTO with derived metrics
-
-**Embedded config portal routes:**
-- Purpose: local operator control plane
-- Examples: `components/config_web_service/config_web_service.c`
-- Pattern: small REST + HTML surface over `esp_http_server`
-
-## Entry Points
-
-**Firmware boot entry:**
-- Location: `main/main.c`
-- Triggers: ESP-IDF application startup
-- Responsibilities: initialize major services and log startup failures
-
-**Config web server entry:**
-- Location: `components/config_web_service/config_web_service.c`
-- Triggers: `config_web_service_start()`
-- Responsibilities: bind `GET /`, `GET /api/config`, `POST /api/config`, `GET /api/status`, `POST /api/portal/complete`, and `POST /api/restart`
-
-**UI entry:**
-- Location: `components/ui_service/monitor_dashboard_screen.c`
-- Triggers: `wifi_info_screen_start()`
-- Responsibilities: initialize BSP display, load fonts, create the dashboard layout, and arm refresh timers
+```text
+POST /api/config
+  ├─ parse submitted form body
+  ├─ validate app_config_t
+  ├─ save NVS blob
+  └─ schedule restart
+```
 
 ## Architectural Constraints
 
-- **Threading:** service state lives behind FreeRTOS synchronization; provider polling runs in its own task and UI updates run from LVGL-related timer callbacks
-- **Global state:** `network_service` and `provider_service` both own static singleton state blocks in their `.c` files
-- **Circular component dependency:** `components/network_service/CMakeLists.txt` requires `provider_service`, while `components/provider_service/CMakeLists.txt` requires `network_service`
-- **Board coupling:** display path is intentionally tied to the Waveshare BSP and LVGL/TinyTTF configuration
-- **Hosted Wi-Fi constraint:** wireless path assumes `ESP-Hosted + esp_wifi_remote`, not native on-chip Wi-Fi on the P4
+- Display and touch should stay BSP-led unless the BSP cannot satisfy a requirement.
+- Wireless must remain on the ESP-Hosted / Wi-Fi Remote path for this board.
+- Runtime credentials belong in NVS or ignored machine config, not documentation.
+- `sdkconfig.defaults` is the committed baseline; `sdkconfig` is machine-effective state.
+- The UI is LVGL-only.
+- HTTP polling is the current provider integration model; WebSocket or MQTT would be a later architectural change.
 
-## Anti-Patterns
+## Residual Smells
 
-### Public API name diverges from implementation meaning
-
-**What happens:** the UI implementation file is `monitor_dashboard_screen.c`, but the exported start symbol remains `wifi_info_screen_start()`.
-**Why it's wrong:** it hides the current product shape and makes future refactors easier to misread.
-**Do this instead:** keep docs explicit about the mismatch and rename the public API only as part of a coordinated cleanup touching `main/main.c` and `components/ui_service/include/wifi_info_screen.h`.
-
-### Cross-service compile-time coupling
-
-**What happens:** `network_service` and `provider_service` require each other at the component level.
-**Why it's wrong:** it hardens boundaries, complicates extraction of shared contracts, and increases rebuild fragility.
-**Do this instead:** move shared types or readiness queries into a thinner shared contract component before adding more runtime coordination.
-
-## Error Handling
-
-**Strategy:** fail soft on startup and surface runtime failures through status text rather than aborting the app
-
-**Patterns:**
-- `ESP_RETURN_ON_ERROR` guards HTTP handler and initialization code in `components/config_web_service/config_web_service.c`
-- `provider_service_set_status()` converts HTTP and parsing failures into user-visible provider state text
-- `main/main.c` logs individual service start failures without stopping the whole boot sequence
-
-## Cross-Cutting Concerns
-
-**Logging:** `ESP_LOGE` / `ESP_LOGI` across entry and service components
-**Validation:** centralized in `app_config_validate()` and reused by config portal saves
-**Persistence:** NVS-backed runtime config plus in-memory snapshot state
-**Operator access:** board-local HTTP portal plus the LVGL dashboard
-
----
-
-*Architecture analysis: 2026-05-17*
+- `wifi_info_screen_start()` no longer describes the dashboard role.
+- `config_web_service.c` is large because it holds HTML, JSON, REST handlers, proxy code, and restart scheduling in one file.
+- Provider parsing appears tailored to the current AQI response while the public config model is already generic.
+- Sensitive fields are returned by the local config API; this is acceptable for current local bring-up but should be tightened before production exposure.

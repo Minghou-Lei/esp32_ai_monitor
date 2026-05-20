@@ -3,7 +3,34 @@
 
 ## 系统概览
 
-当前固件是一个运行在 `ESP32-P4` 上的本地监控终端。它把板级显示、Wi-Fi / 企业网接入、远端 provider 状态拉取和本地配置网页组合成一个统一运行时：用户既可以在屏幕上看状态，也可以通过设备当前可达的 IP 打开本地配置页调整运行参数。
+`esp32_ai_monitor` 是运行在 `Waveshare ESP32-P4-WIFI6-Touch-LCD-4B` 上的板端监控终端。当前固件的职责是把屏幕、网络、配置门户和远端 provider 状态组织成一个可上板验证的终端，而不是在 `ESP32-P4` 上运行完整 AI Agent。
+
+当前运行时已经包括：
+
+- `BSP + LVGL` 主监控屏。
+- 统一运行时配置模型。
+- `STA` / 企业认证 / 门户状态 / fallback `SoftAP`。
+- 远端 provider HTTP polling。
+- 板上本地配置网页和 REST API。
+- BOOT 按钮长按配置入口。
+
+## 启动编排
+
+`main/main.c` 保持薄入口，只负责启动服务并记录启动错误。当前顺序：
+
+1. `wifi_info_screen_start()`
+2. `network_service_start()`
+3. `provider_service_start()`
+4. `config_web_service_start()`
+5. `board_input_service_start()`
+
+这条顺序的含义：
+
+- 先点亮屏幕，确保上电后有可见反馈。
+- 再启动网络，让 UI 能显示连接与门户状态。
+- 再启动 provider 轮询，让远端状态进入快照。
+- 再启动本地配置网页。
+- 最后启动物理按钮轮询，给现场配置留入口。
 
 ## 组件关系
 
@@ -12,7 +39,8 @@ app_main()
   ├─ wifi_info_screen_start()
   ├─ network_service_start()
   ├─ provider_service_start()
-  └─ config_web_service_start()
+  ├─ config_web_service_start()
+  └─ board_input_service_start()
 
 app_config_service
   ├─ network_service
@@ -24,157 +52,132 @@ network_service ── snapshot ──► ui_service
 provider_service ─ snapshot ──► ui_service
 network_service ── snapshot ──► config_web_service
 provider_service ─ snapshot ──► config_web_service
+board_input_service ─ command ─► network_service
 ```
-
-## 启动编排
-
-入口文件是 `main/main.c`。
-
-启动顺序固定为：
-
-1. `wifi_info_screen_start()`
-2. `network_service_start()`
-3. `provider_service_start()`
-4. `config_web_service_start()`
-
-这样安排的目的很明确：
-
-- 先点亮主屏，设备上电后立刻给出可见反馈
-- 再启动网络状态机，让仪表盘进入可诊断态
-- 再启动 provider 轮询，把远端业务状态折叠进本地快照
-- 最后开放板上配置入口，给首次配网和参数修正留出口
 
 ## 配置中心
 
-配置中心位于：
-
-- `components/app_config_service/include/app_config_service.h`
-- `components/app_config_service/app_config_service.c`
+`components/app_config_service` 是运行时配置的单一入口。
 
 它负责：
 
-- 从 `sdkconfig.defaults` / `sdkconfig` 装配编译期默认值
-- 维护统一的 `app_config_t`
-- 校验配置字段约束
-- 把运行时覆盖写入 NVS
-- 在需要时恢复默认配置
+- 从 `sdkconfig` 符号装配默认值。
+- 从 NVS 读取运行时覆盖。
+- 保存新的配置 blob。
+- 校验字段长度、必要值和 AP 密码规则。
+- 提供字符串与枚举之间的转换。
 
-当前配置模型至少覆盖：
+当前 `app_config_t` 覆盖：
 
-- Wi-Fi 基本接入参数
-- WPA2-Enterprise 凭据
-- 门户元数据
-- fallback 配置热点
-- provider 端点、鉴权与展示参数
-- UI / provider 刷新周期
+- `wifi`
+  - SSID、密码、主机名、认证模式、企业认证字段、门户字段。
+- `config_ap`
+  - 启用状态、SSID、密码。
+- `provider`
+  - 类型、显示名、base URL、endpoint path、access token、management key、用户头、刷新周期。
+- `ui_refresh_interval_ms`
+
+新增配置字段应先进入 `app_config_service`，再让网络、provider、Web 和 UI 层消费。
 
 ## 网络接入层
 
-网络服务位于：
+`components/network_service` 负责无线接入和门户状态。
 
-- `components/network_service/include/network_service.h`
-- `components/network_service/network_service.c`
+当前能力：
 
-它承担的不是简单的 `STA` 连网，而是完整的接入状态机：
+- 初始化 NVS、事件循环、netif 和 Wi-Fi。
+- 根据运行时配置启动 `STA`。
+- 支持开放网络、WPA2-PSK 和 WPA2-Enterprise。
+- 维护门户状态：disabled、waiting、required、completed。
+- 支持 fallback 配置 AP。
+- 暴露 `network_service_snapshot_t`。
 
-- 初始化 NVS、默认事件循环和默认 netif
-- 启动 `Wi-Fi Station`
-- 根据配置决定是否启用 fallback `SoftAP`
-- 支持 `WPA2-PSK` 与 `WPA2-Enterprise`
-- 维护门户状态
-- 聚合统一的 `network_service_snapshot_t`
+快照字段包括：
 
-当前重要状态包括：
-
-- `NETWORK_SERVICE_STATE_UNCONFIGURED`
-- `NETWORK_SERVICE_STATE_IDLE`
-- `NETWORK_SERVICE_STATE_CONNECTING`
-- `NETWORK_SERVICE_STATE_CONNECTED`
-- `NETWORK_SERVICE_STATE_DISCONNECTED`
-- `NETWORK_SERVICE_STATE_PORTAL_REQUIRED`
-- `NETWORK_SERVICE_STATE_CONFIG_AP`
-
-门户状态通过 `components/network_service/network_service.c` 中的 `network_service_mark_portal_complete()` 推进。
+- 当前状态和状态文本。
+- 凭据是否就绪、IP 是否就绪、SoftAP 是否 active。
+- SSID、STA MAC、AP MAC、BSSID。
+- IPv4、netmask、gateway、DNS。
+- RSSI、主信道、辅助信道。
+- portal URL、认证模式和 cipher 文本。
 
 ## Provider 轮询层
 
-Provider 服务位于：
+`components/provider_service` 负责远端 provider polling 和数据归一化。
 
-- `components/provider_service/include/provider_service.h`
-- `components/provider_service/provider_service.c`
+当前实现：
 
-它当前已经做成通用 provider 形状，但真实实现只有 `AQI` provider 首版。职责包括：
+- 从 `app_config_service` 读取 provider 配置。
+- 等待网络可用后发起 HTTP 请求。
+- 解析 provider 响应。
+- 维护抓取次数、成功次数、失败次数、HTTP 状态、最近抓取时间。
+- 输出最多两个 `provider_service_item_t`。
+- 计算 delta、小时消费金额和使用比例。
 
-- 从统一配置读取 `base_url`、`endpoint_path`、access token 和自定义用户头
-- 使用 `esp_http_client` 轮询远端接口
-- 维护抓取次数、成功次数、失败次数、最近 HTTP 状态
-- 计算用量 delta 与小时级统计
-- 导出 `provider_service_snapshot_t`
+当前真实 provider 类型是 `APP_CONFIG_PROVIDER_AQI`。接口已经预留 provider 抽象，但不要把它描述成已经实现多个 provider。
 
-Provider 轮询任务在 `components/provider_service/provider_service.c` 中运行，按照 `refresh_interval_ms` 周期刷新，也支持手动刷新请求。
+## 本地配置网页
 
-## 板上配置网页
+`components/config_web_service` 提供板上 HTTP 配置面。
 
-配置网页服务位于：
+当前路由：
 
-- `components/config_web_service/include/config_web_service.h`
-- `components/config_web_service/config_web_service.c`
-
-它通过 `esp_http_server` 暴露一个单文件 HTML 页面和少量 REST 接口：
-
-- `GET /`
 - `GET /api/config`
 - `POST /api/config`
 - `GET /api/status`
 - `POST /api/portal/complete`
 - `POST /api/restart`
+- `GET /portal/open`
+- `ANY /portal/proxy*`
+- `GET /*`
 
-这层的设计目标不是“富网页应用”，而是：
+它同时承担：
 
-- 单文件
-- 易抓包
-- 在 bring-up 阶段也足够稳
-- 所有保存动作都复用 `app_config_service` 的校验逻辑
+- 嵌入式 HTML 配置页。
+- 配置 JSON 读写。
+- 状态 JSON 输出。
+- 门户代理。
+- 保存配置后的重启调度。
 
 ## UI 与显示层
 
-UI 实现位于 `components/ui_service/monitor_dashboard_screen.c`，但公开入口头文件仍是 `components/ui_service/include/wifi_info_screen.h`。
+`components/ui_service` 基于官方 BSP 和 LVGL 创建主监控屏。
 
-当前主屏已经不是旧的 Wi-Fi 详情页，而是 AQI 风格主监控屏，展示内容包括：
+当前事实：
 
-- 主余额卡片
-- USED 百分比
-- DELTA 信息
-- 小时消费金额
-- 底部网络 / provider / 诊断状态文本
+- `monitor_dashboard_screen.c` 是主实现。
+- 对外入口仍是 `wifi_info_screen_start()`。
+- 使用内嵌 `components/ui_service/assets/jnr_sb_font.ttf`。
+- 读取 `network_service_snapshot_t` 和 `provider_service_snapshot_t`。
+- 渲染余额、USED 百分比、DELTA、小时消费、网络状态和 provider 状态。
 
-屏幕刷新依赖 `network_service_snapshot_t` 与 `provider_service_snapshot_t`，不直接管理 Wi-Fi 驱动生命周期。
+显示链路依赖 `PSRAM`、`LVGL TinyTTF` 和 `CONFIG_LV_USE_CLIB_MALLOC=y`。
+
+## 物理输入层
+
+`components/board_input_service` 监听上方 BOOT 按钮。
+
+当前行为：
+
+- 轮询 GPIO 35。
+- 短按忽略。
+- 长按约 2 秒后请求进入配置 AP 路径。
+
+这个组件不直接改配置，也不直接创建 UI，只把物理动作转换成网络服务命令。
 
 ## 板级与运行时约束
 
-当前架构建立在这些前提上：
-
-- `ESP-IDF v6.0.1`
-- `esp32p4`
-- `32MB flash`
-- `PSRAM`
-- `LVGL + TinyTTF + CLIB malloc`
-- `ESP-Hosted + esp_wifi_remote`
-- `waveshare/esp32_p4_wifi6_touch_lcd_4b` BSP
-
-无线能力的正确理解仍然是：
-
-- `ESP32-P4` 负责主控、UI 和业务逻辑
-- 板载 `ESP32-C6` 提供无线能力
-- 主工程通过 Hosted / Remote 路线使用 Wi-Fi
-
-因此不要把本项目按“P4 原生本地 Wi-Fi”去推导。
+- 使用 `ESP-IDF v6.0.1`。
+- target 是 `esp32p4`。
+- 板载无线按 `ESP32-P4 host + ESP32-C6 coprocessor` 理解。
+- 无线链路走 `ESP-Hosted + esp_wifi_remote`。
+- 不启用 `CONFIG_ESP_HOST_WIFI_ENABLED`。
+- 点屏、触摸和背光优先走 Waveshare BSP。
+- `sdkconfig.defaults` 是可提交基线，`sdkconfig` 是本机状态。
 
 ## 结构性风险
 
-当前最值得持续盯住的结构问题有两类：
-
-1. UI 的公开 API 名与实现语义已经错位
-2. `network_service` 与 `provider_service` 在组件层形成了双向依赖
-
-这两点都不阻止当前固件继续演进，但后续扩模块时必须显式处理，不能再继续放大耦合。
+- `config_web_service.c` 已经同时承载 HTML、REST、代理和重启调度，后续继续扩展前应考虑拆分。
+- `wifi_info_screen_start()` 是遗留 API 名，容易误导为 Wi-Fi-only 页面。
+- provider 抽象边界已经存在，但当前实现仍以 AQI provider 为主。
+- 本地配置 API 涉及敏感字段，生产化前需要评估 readback 脱敏或认证。

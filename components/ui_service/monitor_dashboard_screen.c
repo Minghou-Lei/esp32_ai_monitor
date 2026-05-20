@@ -32,12 +32,14 @@ static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_SMALL = 20;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_MEDIUM = 28;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_BALANCE = 58;
 static const int32_t WIFI_INFO_SCREEN_FONT_SIZE_DELTA = 34;
+static const int32_t WIFI_INFO_SCREEN_WIFI_DOT_SIZE = 18;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_BLACK = 0x000000;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_WHITE = 0xFFFFFF;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_BORDER = 0xF5F5F5;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_AMBER = 0x7A4313;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_BLUE = 0x0E2A63;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_GREEN = 0x2F5E3B;
+static const uint32_t WIFI_INFO_SCREEN_COLOR_WIFI_DOT = 0x22C55E;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_RED = 0x742A25;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_DIM = 0xD1D5DB;
 static const uint32_t WIFI_INFO_SCREEN_COLOR_PANEL_BG = 0x050505;
@@ -71,6 +73,7 @@ static wifi_info_screen_board_row_t s_primary_row;
 static wifi_info_screen_board_row_t s_secondary_row;
 static lv_obj_t *s_details_panel;
 static lv_obj_t *s_details_label;
+static lv_obj_t *s_wifi_indicator_dot;
 static bool s_details_diagnostic_mode;
 static bool s_screen_started;
 static bool s_first_refresh_completed;
@@ -386,6 +389,20 @@ static bool wifi_info_screen_has_value(const char *text)
     return (text != NULL) && (text[0] != '\0') && (strcmp(text, "-") != 0);
 }
 
+static void wifi_info_screen_format_delta_amount(const char *amount, char *buffer, size_t buffer_size)
+{
+    if ((buffer == NULL) || (buffer_size == 0U)) {
+        return;
+    }
+
+    if (!wifi_info_screen_has_value(amount)) {
+        snprintf(buffer, buffer_size, "-");
+        return;
+    }
+
+    snprintf(buffer, buffer_size, (amount[0] == '-') ? "%s" : "-%s", amount);
+}
+
 static bool wifi_info_screen_has_subscription(const provider_service_item_t *item)
 {
     return (item != NULL) && item->valid;
@@ -500,6 +517,10 @@ static void wifi_info_screen_build_details_text(void)
 {
     s_text_buffer[0] = '\0';
     size_t offset = 0;
+    char delta_amount_text[PROVIDER_SERVICE_MONEY_TEXT_LEN + 2U];
+    wifi_info_screen_format_delta_amount(s_provider_snapshot_cache.delta_used_amount,
+                                         delta_amount_text,
+                                         sizeof(delta_amount_text));
 
     if (!s_details_diagnostic_mode) {
         wifi_info_screen_appendf(&offset,
@@ -516,7 +537,7 @@ static void wifi_info_screen_build_details_text(void)
                                  s_snapshot_cache.rssi);
         wifi_info_screen_appendf(&offset,
                                  "DELTA %s / %s",
-                                 s_provider_snapshot_cache.delta_used_amount,
+                                 delta_amount_text,
                                  s_provider_snapshot_cache.delta_used_percent);
         return;
     }
@@ -534,7 +555,7 @@ static void wifi_info_screen_build_details_text(void)
                              (long)s_provider_snapshot_cache.last_http_status);
     wifi_info_screen_appendf(&offset,
                              "DELTA %s / %s / Δ %s\n",
-                             s_provider_snapshot_cache.delta_used_amount,
+                             delta_amount_text,
                              s_provider_snapshot_cache.delta_used_percent,
                              wifi_info_screen_get_interval_text(s_provider_snapshot_cache.last_success_interval_seconds));
     wifi_info_screen_appendf(&offset,
@@ -795,6 +816,18 @@ static void wifi_info_screen_refresh(lv_timer_t *timer)
     provider_service_get_snapshot(&s_provider_snapshot_cache);
 
     const provider_service_item_t *primary_subscription = &s_provider_snapshot_cache.items[0];
+    char delta_amount_text[PROVIDER_SERVICE_MONEY_TEXT_LEN + 2U];
+    wifi_info_screen_format_delta_amount(s_provider_snapshot_cache.delta_used_amount,
+                                         delta_amount_text,
+                                         sizeof(delta_amount_text));
+
+    if (s_wifi_indicator_dot != NULL) {
+        if (s_snapshot_cache.softap_active) {
+            lv_obj_clear_flag(s_wifi_indicator_dot, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_wifi_indicator_dot, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     wifi_info_screen_set_panel_color_if_changed(s_primary_row.badge_panel,
                                                 &s_primary_row.badge_color_cache,
@@ -845,8 +878,7 @@ static void wifi_info_screen_refresh(lv_timer_t *timer)
                                                 WIFI_INFO_SCREEN_COLOR_PANEL_BG);
     wifi_info_screen_set_label_text_if_changed(s_secondary_row.badge_label, "DELTA");
     wifi_info_screen_set_label_text_if_changed(s_secondary_row.badge_subtitle, "SINCE LAST OK");
-    wifi_info_screen_set_label_text_if_changed(s_secondary_row.main_label,
-                                               s_provider_snapshot_cache.delta_used_amount);
+    wifi_info_screen_set_label_text_if_changed(s_secondary_row.main_label, delta_amount_text);
     wifi_info_screen_update_delta_progress_fill();
 
     char secondary_strip_text[128];
@@ -962,6 +994,16 @@ static void wifi_info_screen_create_layout(void)
     lv_label_set_long_mode(s_details_label, LV_LABEL_LONG_WRAP);
     lv_obj_align(s_details_label, LV_ALIGN_TOP_LEFT, 14, 50);
     lv_label_set_text(s_details_label, "AQI and Wi-Fi board loading...");
+
+    s_wifi_indicator_dot = lv_obj_create(screen);
+    lv_obj_remove_style_all(s_wifi_indicator_dot);
+    lv_obj_set_size(s_wifi_indicator_dot, WIFI_INFO_SCREEN_WIFI_DOT_SIZE, WIFI_INFO_SCREEN_WIFI_DOT_SIZE);
+    lv_obj_set_style_bg_opa(s_wifi_indicator_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_wifi_indicator_dot, lv_color_hex(WIFI_INFO_SCREEN_COLOR_WIFI_DOT), 0);
+    lv_obj_set_style_radius(s_wifi_indicator_dot, WIFI_INFO_SCREEN_WIFI_DOT_SIZE / 2, 0);
+    lv_obj_set_style_border_width(s_wifi_indicator_dot, 0, 0);
+    lv_obj_align(s_wifi_indicator_dot, LV_ALIGN_TOP_LEFT, 654, 516);
+    lv_obj_add_flag(s_wifi_indicator_dot, LV_OBJ_FLAG_HIDDEN);
 
     lv_timer_create(wifi_info_screen_refresh, WIFI_INFO_SCREEN_FIRST_REFRESH_MS, NULL);
 }

@@ -26,6 +26,7 @@
 #include "provider_service.h"
 
 static const char *TAG = "network_service";
+static const char *NETWORK_SERVICE_CONFIG_AP_FALLBACK_SSID = "ESP32-AI-Monitor-Setup";
 static SemaphoreHandle_t s_state_lock;
 static esp_netif_t *s_wifi_sta_netif;
 static esp_netif_t *s_wifi_ap_netif;
@@ -149,14 +150,12 @@ static const char *network_service_second_channel_to_string(wifi_second_chan_t s
     }
 }
 
-static void network_service_reset_runtime_fields_locked(void)
+static void network_service_reset_runtime_fields_locked(bool keep_ap_fields)
 {
     network_service_copy_text(s_snapshot.connected_ssid, sizeof(s_snapshot.connected_ssid), "-");
     network_service_copy_text(s_snapshot.sta_mac, sizeof(s_snapshot.sta_mac), "-");
-    network_service_copy_text(s_snapshot.ap_mac, sizeof(s_snapshot.ap_mac), "-");
     network_service_copy_text(s_snapshot.bssid, sizeof(s_snapshot.bssid), "-");
     network_service_copy_text(s_snapshot.ip, sizeof(s_snapshot.ip), "-");
-    network_service_copy_text(s_snapshot.ap_ip, sizeof(s_snapshot.ap_ip), "-");
     network_service_copy_text(s_snapshot.netmask, sizeof(s_snapshot.netmask), "-");
     network_service_copy_text(s_snapshot.gateway, sizeof(s_snapshot.gateway), "-");
     network_service_copy_text(s_snapshot.dns_main, sizeof(s_snapshot.dns_main), "-");
@@ -166,9 +165,14 @@ static void network_service_reset_runtime_fields_locked(void)
     network_service_copy_text(s_snapshot.pairwise_cipher, sizeof(s_snapshot.pairwise_cipher), "-");
     network_service_copy_text(s_snapshot.group_cipher, sizeof(s_snapshot.group_cipher), "-");
     s_snapshot.ip_ready = false;
-    s_snapshot.softap_active = false;
     s_snapshot.rssi = 0;
     s_snapshot.primary_channel = 0;
+
+    if (!keep_ap_fields) {
+        network_service_copy_text(s_snapshot.ap_mac, sizeof(s_snapshot.ap_mac), "-");
+        network_service_copy_text(s_snapshot.ap_ip, sizeof(s_snapshot.ap_ip), "-");
+        s_snapshot.softap_active = false;
+    }
 }
 
 static void network_service_set_state_locked(network_service_state_t state, const char *state_text, const char *status_text)
@@ -178,12 +182,16 @@ static void network_service_set_state_locked(network_service_state_t state, cons
     network_service_copy_text(s_snapshot.status_text, sizeof(s_snapshot.status_text), status_text);
 }
 
+static wifi_mode_t network_service_get_non_ap_mode_locked(void)
+{
+    return s_snapshot.credentials_ready ? WIFI_MODE_STA : WIFI_MODE_NULL;
+}
+
 static void network_service_apply_config_locked(const app_config_t *config)
 {
     s_config = *config;
 
-    s_snapshot.mode = s_config.config_ap.enabled ? NETWORK_SERVICE_MODE_APSTA_FALLBACK
-                                                 : NETWORK_SERVICE_MODE_STA_ONLY;
+    s_snapshot.mode = NETWORK_SERVICE_MODE_STA_ONLY;
     s_snapshot.credentials_ready = (s_config.wifi.ssid[0] != '\0');
     s_snapshot.password_configured = (s_config.wifi.password[0] != '\0')
                                      || (s_config.wifi.eap_password[0] != '\0');
@@ -201,21 +209,20 @@ static void network_service_apply_config_locked(const app_config_t *config)
     network_service_copy_text(s_snapshot.config_ap_ssid,
                               sizeof(s_snapshot.config_ap_ssid),
                               s_config.config_ap.ssid);
+    network_service_copy_text(s_snapshot.config_ap_password,
+                              sizeof(s_snapshot.config_ap_password),
+                              s_config.config_ap.password);
     network_service_copy_text(s_snapshot.portal_url,
                               sizeof(s_snapshot.portal_url),
                               s_config.wifi.portal_url);
-    network_service_reset_runtime_fields_locked();
+    network_service_reset_runtime_fields_locked(false);
 
     if (s_snapshot.credentials_ready) {
         network_service_set_state_locked(NETWORK_SERVICE_STATE_IDLE, "IDLE", "Wi-Fi stack not started yet.");
-    } else if (s_config.config_ap.enabled) {
-        network_service_set_state_locked(NETWORK_SERVICE_STATE_CONFIG_AP,
-                                         "CONFIG AP",
-                                         "Waiting for configuration through local AP.");
     } else {
         network_service_set_state_locked(NETWORK_SERVICE_STATE_UNCONFIGURED,
                                          "UNCONFIGURED",
-                                         "Set Wi-Fi credentials in the config page.");
+                                         "Hold BOOT for 2 seconds to toggle setup Wi-Fi.");
     }
 }
 
@@ -356,18 +363,23 @@ static void network_service_clear_enterprise_credentials(void)
 
 static esp_err_t network_service_start_config_ap_locked(void)
 {
-    if (!s_config.config_ap.enabled) {
-        return ESP_OK;
-    }
+    const char *ap_ssid = (s_config.config_ap.ssid[0] != '\0') ? s_config.config_ap.ssid
+                                                              : NETWORK_SERVICE_CONFIG_AP_FALLBACK_SSID;
 
     wifi_config_t ap_config = {0};
     network_service_copy_text((char *)ap_config.ap.ssid,
                               sizeof(ap_config.ap.ssid),
-                              s_config.config_ap.ssid);
+                              ap_ssid);
+    network_service_copy_text(s_snapshot.config_ap_ssid,
+                              sizeof(s_snapshot.config_ap_ssid),
+                              ap_ssid);
+    network_service_copy_text(s_snapshot.config_ap_password,
+                              sizeof(s_snapshot.config_ap_password),
+                              s_config.config_ap.password);
     network_service_copy_text((char *)ap_config.ap.password,
                               sizeof(ap_config.ap.password),
                               s_config.config_ap.password);
-    ap_config.ap.ssid_len = (uint8_t)strlen(s_config.config_ap.ssid);
+    ap_config.ap.ssid_len = (uint8_t)strlen(ap_ssid);
     ap_config.ap.channel = 1;
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = (s_config.config_ap.password[0] != '\0') ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
@@ -384,6 +396,44 @@ static esp_err_t network_service_start_config_ap_locked(void)
         return err;
     }
     s_snapshot.softap_active = true;
+    s_snapshot.mode = NETWORK_SERVICE_MODE_APSTA_FALLBACK;
+    ESP_LOGI(TAG,
+             "Config AP active: ssid=%s password_length=%u",
+             s_snapshot.config_ap_ssid,
+             (unsigned)strlen(s_snapshot.config_ap_password));
+    return ESP_OK;
+}
+
+static esp_err_t network_service_stop_config_ap_locked(void)
+{
+    if (!s_snapshot.softap_active) {
+        return ESP_OK;
+    }
+
+    esp_err_t err = esp_wifi_set_mode(network_service_get_non_ap_mode_locked());
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    s_snapshot.softap_active = false;
+    s_snapshot.mode = NETWORK_SERVICE_MODE_STA_ONLY;
+    network_service_copy_text(s_snapshot.ap_ip, sizeof(s_snapshot.ap_ip), "-");
+
+    if (s_snapshot.credentials_ready && s_snapshot.ip_ready) {
+        network_service_set_state_locked(NETWORK_SERVICE_STATE_CONNECTED,
+                                         "CONNECTED",
+                                         "Config AP closed. Station network ready.");
+    } else if (s_snapshot.credentials_ready) {
+        network_service_set_state_locked(NETWORK_SERVICE_STATE_CONNECTING,
+                                         "CONNECTING",
+                                         "Config AP closed. Reconnecting station.");
+    } else {
+        network_service_set_state_locked(NETWORK_SERVICE_STATE_UNCONFIGURED,
+                                         "UNCONFIGURED",
+                                         "Config AP closed. Hold BOOT to reopen setup.");
+    }
+
+    ESP_LOGI(TAG, "Config AP closed by button toggle");
     return ESP_OK;
 }
 
@@ -419,12 +469,12 @@ static void network_service_wifi_event_handler(void *arg,
             (const wifi_event_sta_disconnected_t *)event_data;
         s_snapshot.reconnect_attempts += 1;
         s_snapshot.last_disconnect_reason = disconnected->reason;
-        network_service_reset_runtime_fields_locked();
+        network_service_reset_runtime_fields_locked(s_snapshot.softap_active);
 
-        if (!s_snapshot.credentials_ready && s_config.config_ap.enabled) {
-            network_service_set_state_locked(NETWORK_SERVICE_STATE_CONFIG_AP,
-                                             "CONFIG AP",
-                                             "Waiting for configuration through local AP.");
+        if (!s_snapshot.credentials_ready) {
+            network_service_set_state_locked(NETWORK_SERVICE_STATE_UNCONFIGURED,
+                                             "UNCONFIGURED",
+                                             "Hold BOOT for 2 seconds to toggle setup Wi-Fi.");
         } else {
             network_service_set_state_locked(NETWORK_SERVICE_STATE_DISCONNECTED,
                                              "DISCONNECTED",
@@ -509,10 +559,6 @@ esp_err_t network_service_start(void)
 
     s_wifi_sta_netif = esp_netif_create_default_wifi_sta();
     ESP_RETURN_ON_FALSE(s_wifi_sta_netif != NULL, ESP_FAIL, TAG, "wifi sta netif create failed");
-    if (s_config.config_ap.enabled) {
-        ESP_RETURN_ON_FALSE(network_service_create_ap_netif_once() != NULL, ESP_FAIL, TAG, "wifi ap netif create failed");
-    }
-
     if (s_config.wifi.hostname[0] != '\0') {
         ESP_RETURN_ON_ERROR(esp_netif_set_hostname(s_wifi_sta_netif, s_config.wifi.hostname),
                             TAG,
@@ -542,9 +588,7 @@ esp_err_t network_service_start(void)
     sta_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     sta_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
 
-    wifi_mode_t wifi_mode = s_snapshot.credentials_ready
-                                ? (s_config.config_ap.enabled ? WIFI_MODE_APSTA : WIFI_MODE_STA)
-                                : WIFI_MODE_AP;
+    wifi_mode_t wifi_mode = network_service_get_non_ap_mode_locked();
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(wifi_mode), TAG, "esp_wifi_set_mode failed");
     if (s_snapshot.credentials_ready) {
@@ -558,23 +602,18 @@ esp_err_t network_service_start(void)
         }
     }
 
-    xSemaphoreTake(s_state_lock, portMAX_DELAY);
-    esp_err_t err = network_service_start_config_ap_locked();
-    xSemaphoreGive(s_state_lock);
-    ESP_RETURN_ON_ERROR(err, TAG, "config ap start failed");
-
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "esp_wifi_start failed");
 
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
     s_wifi_started = true;
-    if (!s_snapshot.credentials_ready && s_config.config_ap.enabled) {
-        network_service_set_state_locked(NETWORK_SERVICE_STATE_CONFIG_AP,
-                                         "CONFIG AP",
-                                         "Config AP active. Join it to open the setup page.");
-    } else {
+    if (s_snapshot.credentials_ready) {
         network_service_set_state_locked(NETWORK_SERVICE_STATE_CONNECTING,
                                          "CONNECTING",
                                          "Wi-Fi stack ready. Waiting for station start event.");
+    } else {
+        network_service_set_state_locked(NETWORK_SERVICE_STATE_UNCONFIGURED,
+                                         "UNCONFIGURED",
+                                         "Hold BOOT for 2 seconds to toggle setup Wi-Fi.");
     }
     xSemaphoreGive(s_state_lock);
 
@@ -596,6 +635,26 @@ void network_service_get_snapshot(network_service_snapshot_t *out)
     network_service_refresh_runtime_fields_locked();
     memcpy(out, &s_snapshot, sizeof(*out));
     xSemaphoreGive(s_state_lock);
+}
+
+esp_err_t network_service_toggle_config_ap(void)
+{
+    ESP_RETURN_ON_ERROR(network_service_ensure_base_services(), TAG, "base services init failed");
+    ESP_RETURN_ON_FALSE(s_wifi_started, ESP_ERR_INVALID_STATE, TAG, "Wi-Fi service not started");
+
+    xSemaphoreTake(s_state_lock, portMAX_DELAY);
+    esp_err_t err = s_snapshot.softap_active ? network_service_stop_config_ap_locked()
+                                             : network_service_start_config_ap_locked();
+    if (err == ESP_OK) {
+        if (s_snapshot.softap_active) {
+            network_service_set_state_locked(NETWORK_SERVICE_STATE_CONFIG_AP,
+                                             "CONFIG AP",
+                                             "Config AP active. Hold BOOT again to close setup Wi-Fi.");
+        }
+    }
+    xSemaphoreGive(s_state_lock);
+
+    return err;
 }
 
 esp_err_t network_service_mark_portal_complete(void)

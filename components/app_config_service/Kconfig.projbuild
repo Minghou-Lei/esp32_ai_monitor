@@ -77,10 +77,11 @@ menu "AI Monitor Configuration"
             Default password shown in the config page for the OA / portal flow.
 
     config AI_MONITOR_CONFIG_AP_ENABLED
-        bool "Enable configuration AP fallback"
+        bool "Enable BOOT-button configuration AP"
         default y
         help
-            Start a dedicated config AP so the board still exposes its web setup page before STA is usable.
+            Keep local setup AP credentials available. The AP toggles only
+            when the upper BOOT button is held.
 
     config AI_MONITOR_CONFIG_AP_SSID
         string "Configuration AP SSID"

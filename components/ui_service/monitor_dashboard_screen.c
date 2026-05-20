@@ -550,6 +550,17 @@ static void wifi_info_screen_build_details_text(void)
                              "HOST %s / AP %s\n",
                              s_snapshot_cache.hostname,
                              s_snapshot_cache.connected_ssid);
+    wifi_info_screen_appendf(&offset,
+                             "CONFIG AP %s / IP %s\n",
+                             s_snapshot_cache.config_ap_ssid,
+                             s_snapshot_cache.ap_ip);
+    wifi_info_screen_appendf(&offset,
+                             "CONFIG AP %s / PASS %s\n",
+                             s_snapshot_cache.softap_active ? "ON" : "OFF",
+                             s_snapshot_cache.softap_active
+                                 ? ((s_snapshot_cache.config_ap_password[0] != '\0') ? s_snapshot_cache.config_ap_password
+                                                                                     : "(open)")
+                                  : "hold BOOT 2s");
     if (wifi_info_screen_has_subscription(&s_provider_snapshot_cache.items[0])) {
         const provider_service_item_t *primary = &s_provider_snapshot_cache.items[0];
         wifi_info_screen_appendf(&offset,

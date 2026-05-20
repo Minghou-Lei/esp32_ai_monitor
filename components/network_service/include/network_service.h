@@ -70,6 +70,7 @@ typedef struct {
     char connected_ssid[NETWORK_SERVICE_SSID_LEN];
     char hostname[NETWORK_SERVICE_HOSTNAME_LEN];
     char config_ap_ssid[NETWORK_SERVICE_SSID_LEN];
+    char config_ap_password[NETWORK_SERVICE_STATUS_TEXT_LEN];
     char sta_mac[NETWORK_SERVICE_MAC_LEN];
     char ap_mac[NETWORK_SERVICE_MAC_LEN];
     char bssid[NETWORK_SERVICE_MAC_LEN];
@@ -107,6 +108,14 @@ esp_err_t network_service_start(void);
  * @note 该函数会在持锁状态下补齐 MAC、IP、DNS、AP 信息，适合被 UI 周期性调用。
  */
 void network_service_get_snapshot(network_service_snapshot_t *out);
+
+/**
+ * @brief 手动切换本地配置热点。
+ *
+ * 这个入口用于物理按键触发的配网流程。它在 SoftAP / APSTA 与非 AP 模式之间切换，
+ * 不持久化配置，也不替代 `network_service_start()` 的初始化职责。
+ */
+esp_err_t network_service_toggle_config_ap(void);
 
 /**
  * @brief 将公司门户状态标记为已完成。
